@@ -10,6 +10,7 @@ User = settings.AUTH_USER_MODEL
 # =========================
 class Brand(models.Model):
     name = models.CharField(max_length=150)
+    slug = models.SlugField(unique=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
 

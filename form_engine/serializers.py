@@ -19,7 +19,16 @@ class FormularioCreateSerializer(serializers.ModelSerializer):
 
     def validate_schema(self, value):
         if not isinstance(value, list):
-            raise serializers.ValidationError("Schema debe ser una lista de campos")
+            raise serializers.ValidationError(
+                "Schema debe ser una lista de campos"
+            )
+
+        for field in value:
+            if "id" not in field or "type" not in field:
+                raise serializers.ValidationError(
+                    "Cada campo debe tener id y type"
+                )
+
         return value
 
     def create(self, validated_data):
