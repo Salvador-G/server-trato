@@ -4,74 +4,80 @@ from django.utils import timezone
 
 User = settings.AUTH_USER_MODEL
 
-
 # =========================
-# BRAND
+# BRAND (Tenant / Marca SaaS)
 # =========================
 class Brand(models.Model):
-    name = models.CharField(max_length=150)
-    slug = models.SlugField(unique=True)
+    name = models.CharField(max_length=150, verbose_name="Nombre de Marca")
     is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Brand"
+        verbose_name_plural = "Brands"
 
     def __str__(self):
         return self.name
 
-
 # =========================
-# ROLE
-# =========================
-class Role(models.Model):
-    name = models.CharField(max_length=100)
-    description = models.TextField(blank=True)
-    is_active = models.BooleanField(default=True)
-
-    def __str__(self):
-        return self.name
-
-
-# =========================
-# PERMISSION
+# PERMISSION (Diccionario Global de Permisos)
 # =========================
 class Permission(models.Model):
     code = models.CharField(
         max_length=100,
         unique=True,
-        help_text="Ej: trade.contactar, contrato.generar"
+        help_text="Ej: trade.contact, contract.generate"
     )
     description = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = "Permission"
+        verbose_name_plural = "Permissions"
 
     def __str__(self):
         return self.code
 
+# =========================
+# ROLE (Aislado por Marca)
+# =========================
+class Role(models.Model):
+    # ¡CLAVE SAAS! El rol pertenece a una marca específica
+    brand = models.ForeignKey(Brand, on_delete=models.CASCADE, related_name="roles") 
+    
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    
+    # Crea la tabla pivot: role_permission automáticamente
+    permissions = models.ManyToManyField(Permission, related_name="roles", blank=True)
 
-# =========================
-# ROLE ↔ PERMISSION
-# =========================
-class RolePermission(models.Model):
-    role = models.ForeignKey(Role, on_delete=models.CASCADE)
-    permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("role", "permission")
+        # Una misma marca no puede tener dos roles que se llamen igual
+        unique_together = ("brand", "name") 
+        verbose_name = "Role"
+        verbose_name_plural = "Roles"
 
     def __str__(self):
-        return f"{self.role} → {self.permission}"
-
+        return f"{self.name} ({self.brand.name})"
 
 # =========================
-# BRAND ↔ USER (ROL POR MARCA)
+# BRAND_USER (Pivot: Trabajador ↔ Marca ↔ Rol)
 # =========================
 class BrandUser(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    brand = models.ForeignKey(Brand, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="brand_roles")
+    brand = models.ForeignKey(Brand, on_delete=models.CASCADE, related_name="users")
     role = models.ForeignKey(Role, on_delete=models.PROTECT)
 
     assigned_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
-        related_name="brand_assignments_created"
+        blank=True,
+        related_name="assignments_created"
     )
 
     is_active = models.BooleanField(default=True)
@@ -79,6 +85,8 @@ class BrandUser(models.Model):
 
     class Meta:
         unique_together = ("user", "brand")
+        verbose_name = "Brand User"
+        verbose_name_plural = "Brand Users"
 
     def __str__(self):
-        return f"{self.user} @ {self.brand} ({self.role})"
+        return f"{self.user} @ {self.brand} ({self.role.name})"

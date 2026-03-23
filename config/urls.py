@@ -16,9 +16,9 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from config.api import api
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('accounts/', include('accounts.urls')),
-    path('form-engine/', include('form_engine.urls')),
+    path('api/', api.urls),  # Aquí se incluyen las rutas de NinjaAPI
 ]

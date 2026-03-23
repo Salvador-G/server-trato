@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+from datetime import timedelta
+from corsheaders.defaults import default_headers
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,14 +27,22 @@ SECRET_KEY = 'django-insecure-!89my7j@4b2zxz52%lq-i!jjahdkwe^gk57=l#9-@18=hw@npl
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+# Permitir conexiones desde localhost (no http)
 ALLOWED_HOSTS = [
-    
+    'localhost',
+    '127.0.0.1',
+    '[::1]', # Esto es localhost en IPv6 (buena práctica)
+    '192.168.1.233', # Añade tu IP local si pruebas desde tu celular u otra PC
 ]
 
+# Limite de carga máxima de archivos (15MB)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024  # 15 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024  # 15 MB
 
 # Application definition
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -40,10 +50,13 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'corsheaders',
-    'rest_framework',
-    'rest_framework_simplejwt',
+    'ninja_jwt',
     'core',
     'accounts',
+    'communications',
+    'documents',
+    'customers',
+    'workflows',
     'form_engine',
 ]
 
@@ -79,12 +92,13 @@ AUTH_USER_MODEL = "accounts.User"
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-REST_FRAMEWORK = {
-    
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    )
-    
+# =========================
+# CONFIGURACIÓN DE NINJA JWT
+# =========================
+NINJA_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60), # El token dura 1 hora
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),    # El refresh dura 7 días
+    'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
 # Database
@@ -140,3 +154,40 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# =========================
+# JAZZMIN SETTINGS
+# =========================
+JAZZMIN_SETTINGS = {
+    # Títulos en la pestaña del navegador y en el panel
+    "site_title": "Trato Admin",
+    "site_header": "Trato",
+    "site_brand": "Administración",
+    
+    # Mensaje de bienvenida en la pantalla de login
+    "welcome_sign": "Bienvenido al Backoffice de Trato",
+    
+    
+    # Derechos de autor
+    "copyright": "Trato Ltd",
+    
+    # Agrupa tus modelos visualmente
+    
+    
+    # Esto es genial: Te pone un botón en el panel para personalizar colores (modo oscuro, colores de botones, etc.)
+    "show_ui_builder": True,
+    
+}
+JAZZMIN_UI_TWEAKS = {
+    "theme": "flatly",
+    "dark_mode_theme": "darkly",
+}
+
+CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+CORS_ALLOWED_ORIGINS = ["http://localhost:5173","http://192.168.1.233:5173"]
+
+# Permitir el header personalizado "x-brand-id" para identificar la marca del cliente
+CORS_ALLOW_HEADERS = (
+    *default_headers,
+    "x-brand-id",
+)
