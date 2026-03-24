@@ -2,12 +2,33 @@
 from ninja import ModelSchema, Schema
 from typing import List, Optional
 from datetime import datetime
-from .models import Brand, Permission, Role, BrandUser
+from .models import Brand, BrandLegalProfile, Permission, Role, BrandUser
 
+# =========================
+# SCHEMAS: BRAND LEGAL PROFILE (KYC)
+# =========================
+class BrandLegalProfileOut(ModelSchema):
+    class Meta:
+        model = BrandLegalProfile
+        fields = ['tax_id', 'legal_name', 'fiscal_address']
+
+class BrandLegalProfileUpdate(ModelSchema):
+    # Todos son opcionales para que puedan actualizar un dato a la vez con PATCH
+    tax_id: Optional[str] = None
+    legal_name: Optional[str] = None
+    fiscal_address: Optional[str] = None
+    
+    class Meta:
+        model = BrandLegalProfile
+        fields = ['tax_id', 'legal_name', 'fiscal_address']
+        config = {"extra": "ignore"}
+        
 # =========================
 # SCHEMAS: BRAND
 # =========================
 class BrandOut(ModelSchema):
+    legal_profile: Optional[BrandLegalProfileOut] = None# Anidamos el perfil legal dentro del brand
+    
     class Meta:
         model = Brand
         fields = ['id', 'name', 'is_active', 'created_at', 'updated_at']

@@ -34,20 +34,24 @@ def create_form(request, payload: FormCreate, x_brand_id: int = Header(..., alia
     """Crea un formulario nuevo, autogenerando el slug y la versión."""
     tenant = get_current_tenant(request, x_brand_id)
     
-    # Generamos el slug a partir del nombre
+    # Generamos el slug a partir del nombre (Si envían 'untitled-form', el slug será ese)
     form_key = slugify(payload.name)
     
-    # Buscamos la última versión de este mismo form_key en esta marca
+    # Buscamos la última versión
     last_version_dict = Form.objects.filter(brand=tenant.brand, form_key=form_key).aggregate(Max('version'))
     last_version = last_version_dict.get('version__max') or 0
     new_version = last_version + 1
     
-    # Creamos el formulario
+    # ¡NUEVO! Apagamos las versiones anteriores de ESTE form_key para evitar conflictos
+    if last_version > 0:
+        Form.objects.filter(brand=tenant.brand, form_key=form_key).update(is_active=False, is_public=False)
+    
+    # Creamos la nueva versión oficial
     form = Form.objects.create(
         brand=tenant.brand,
         form_key=form_key,
         version=new_version,
-        structure={"schema": payload.structure}, # Empaquetamos como pedía tu DRF
+        structure={"schema": payload.structure}, 
         description=payload.description,
         is_public=payload.is_public,
         created_by=request.user

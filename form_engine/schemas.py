@@ -1,7 +1,7 @@
 # form_engine/schemas.py
 from ninja import ModelSchema, Schema
 from typing import List, Dict, Any, Optional
-from pydantic import field_validator # <-- Importación corregida
+from pydantic import field_validator 
 
 from .models import Form, FormSubmission
 
@@ -17,27 +17,20 @@ class FormOut(ModelSchema):
 class FormDetailOut(ModelSchema):
     class Meta:
         model = Form
-        # Cambiamos 'schema' por 'structure'
         fields = ['id', 'form_key', 'version', 'structure', 'description', 'is_public', 'is_active', 'created_at']
 
-# En FormPublicOut actualizamos el resolver:
-    @staticmethod
-    def resolve_schema_fields(obj: Form) -> List[Dict[str, Any]]:
-        # Asumiendo que ahora guardas la lista directa o el dict
-        return obj.structure.get("schema", []) if isinstance(obj.structure, dict) else obj.structure
-    
 class FormCreate(Schema):
     name: str
     structure: List[Dict[str, Any]]
     description: Optional[str] = ""
     is_public: bool = False
 
-    @classmethod # <-- Obligatorio en Pydantic V2
-    @field_validator('structure') # <-- Decorador actualizado
+    @field_validator('structure')
+    @classmethod # Pydantic V2 requiere @classmethod después de @field_validator
     def validate_schema_structure(cls, v):
         for field in v:
             if 'id' not in field or 'type' not in field:
-                raise ValueError("Cada campo dentro del schema debe tener 'id' y 'type'")
+                raise ValueError("Cada campo dentro de la estructura debe tener 'id' y 'type'")
         return v
 
 # ==========================================
@@ -56,7 +49,10 @@ class FormPublicOut(Schema):
 
     @staticmethod
     def resolve_schema_fields(obj: Form) -> List[Dict[str, Any]]:
-        return obj.schema.get("schema", []) if isinstance(obj.schema, dict) else obj.schema
+        # ¡CORREGIDO! Antes decía obj.schema, pero tu modelo ahora usa obj.structure
+        if isinstance(obj.structure, dict):
+            return obj.structure.get("schema", [])
+        return obj.structure
 
     @staticmethod
     def resolve_meta(obj: Form) -> dict:
@@ -71,4 +67,4 @@ class FormPublicOut(Schema):
 
 class FormSubmissionCreate(Schema):
     payload: Dict[str, Any]
-    # No pedimos el form_id ni el source aquí, los sacaremos de la URL y del endpoint público
+    # No pedimos el form_id ni el source aquí, los sacamos de la URL y del endpoint

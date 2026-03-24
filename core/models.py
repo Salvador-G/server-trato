@@ -8,7 +8,7 @@ User = settings.AUTH_USER_MODEL
 # BRAND (Tenant / Marca SaaS)
 # =========================
 class Brand(models.Model):
-    name = models.CharField(max_length=150, verbose_name="Nombre de Marca")
+    name = models.CharField(max_length=150, verbose_name="Nombre Comercial")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -19,6 +19,33 @@ class Brand(models.Model):
 
     def __str__(self):
         return self.name
+    
+# =========================
+# BRAND LEGAL PROFILE
+# =========================
+class BrandLegalProfile(models.Model):
+    brand = models.OneToOneField(
+        Brand, 
+        on_delete=models.CASCADE, 
+        related_name="legal_profile"
+    )
+    tax_id = models.CharField(
+        max_length=50, 
+        unique=True, # ¡Blindaje! Dos marcas no pueden usar el mismo RUC para pagar el SaaS
+        verbose_name="RUC / ID Fiscal"
+    )
+    legal_name = models.CharField(max_length=255, verbose_name="Razón Social")
+    fiscal_address = models.TextField(blank=True, null=True, verbose_name="Dirección Fiscal")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Brand Legal Profile"
+        verbose_name_plural = "Brand Legal Profiles"
+
+    def __str__(self):
+        return f"{self.legal_name} ({self.tax_id})"
 
 # =========================
 # PERMISSION (Diccionario Global de Permisos)

@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import (
     Brand,
+    BrandLegalProfile,
     Role,
     Permission,
     BrandUser,
@@ -11,10 +12,15 @@ class BrandAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "is_active", "created_at")
     list_filter = ("is_active",)
     search_fields = ("name",)
+    
+@admin.register(BrandLegalProfile)
+class BrandLegalProfileAdmin(admin.ModelAdmin):
+    list_display = ("id", "legal_name", "tax_id", "brand")
+    search_fields = ("legal_name", "tax_id", "brand__name")
+    search_fields = ("legal_name", "tax_id", "brand__name")
 
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):
-    # Agregué 'brand' para que veas de qué empresa es el rol en el panel
     list_display = ("id", "name", "brand", "is_active") 
     list_filter = ("brand", "is_active")
     search_fields = ("name", "brand__name")
