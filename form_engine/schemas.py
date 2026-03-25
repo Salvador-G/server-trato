@@ -1,4 +1,6 @@
 # form_engine/schemas.py
+from uuid import UUID
+from datetime import datetime
 from ninja import ModelSchema, Schema
 from typing import List, Dict, Any, Optional
 from pydantic import field_validator 
@@ -68,3 +70,21 @@ class FormPublicOut(Schema):
 class FormSubmissionCreate(Schema):
     payload: Dict[str, Any]
     # No pedimos el form_id ni el source aquí, los sacamos de la URL y del endpoint
+    source: str = "widget" # default
+    
+class FormSubmissionOut(Schema):
+    id: UUID
+    form_name: str
+    source: str
+    submitted_at: datetime
+    payload: Dict[str, Any]
+
+    @staticmethod
+    def resolve_id(obj: FormSubmission):
+        # Mapeamos submission_id a "id" para que Vue lo lea fácil
+        return obj.submission_id
+
+    @staticmethod
+    def resolve_form_name(obj: FormSubmission):
+        # Extraemos el nombre del formulario relacionado
+        return obj.form.form_key

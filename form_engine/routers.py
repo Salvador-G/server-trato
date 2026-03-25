@@ -10,7 +10,7 @@ from ninja_jwt.authentication import JWTAuth
 from .models import Form, FormSubmission
 from .schemas import (
     FormOut, FormCreate, FormDetailOut,
-    FormPublicOut, FormSubmissionCreate
+    FormPublicOut, FormSubmissionCreate, FormSubmissionOut
 )
 from core.dependencies import get_current_tenant
 
@@ -58,6 +58,17 @@ def create_form(request, payload: FormCreate, x_brand_id: int = Header(..., alia
     )
     return 201, form
 
+@router.get("/submissions", response=List[FormSubmissionOut])
+def list_submissions(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    """Lista todos los leads (submissions) capturados para la marca actual."""
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    # Gracias al Schema, solo necesitamos retornar el QuerySet directo
+    return FormSubmission.objects.filter(
+        form__brand=tenant.brand
+    ).select_related('form').order_by('-submitted_at')
+    
+    
 @router.get("/{form_id}", response=FormDetailOut)
 def get_form_detail(request, form_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """Obtiene el JSON completo de un formulario para editarlo en el builder."""
@@ -109,7 +120,7 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
     submission = FormSubmission.objects.create(
         form=form,
         payload=payload.payload,
-        source="widget" # Fijamos la fuente tal como lo hacía tu APIView
+        source=payload.source
     )
     
     return 201, {"submission_id": str(submission.submission_id)}

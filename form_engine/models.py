@@ -45,6 +45,7 @@ class Form(models.Model):
 class FormSubmission(models.Model):
     SOURCE_CHOICES = (
         ("widget", "Widget"),
+        ("iframe", "Iframe HTML"),
         ("internal", "Internal"),
         ("api", "API"),
     )
