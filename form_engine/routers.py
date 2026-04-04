@@ -21,7 +21,7 @@ router = Router(tags=["Form Engine"], auth=JWTAuth())
 # ENDPOINTS PRIVADOS (Panel de Control SaaS)
 # ==========================================
 
-@router.get("/", response=List[FormOut])
+@router.get("/", response={200: List[FormOut]})
 def list_forms(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """Lista todos los formularios de la marca actual."""
     tenant = get_current_tenant(request, x_brand_id)
