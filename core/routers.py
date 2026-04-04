@@ -12,7 +12,7 @@ from .models import Role, Brand, BrandUser
 from .schemas import (
     RoleOut, RoleCreate, RoleUpdate,
     BrandOut, BrandCreate, BrandUpdate,
-    BrandUserOut, BrandUserCreate, BrandUserUpdate
+    BrandUserOut, BrandUserCreate, BrandUserUpdate, UserMeOut
 )
 from .dependencies import get_current_tenant
 
@@ -73,7 +73,32 @@ def update_current_brand(request, payload: BrandUpdate, x_brand_id: int = Header
         brand.save(update_fields=update_data.keys())
     return brand
 
+@router.get("/me", response=UserMeOut)
+def get_me_context(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    tenant = get_current_tenant(request, x_brand_id)
+    user = tenant.user
 
+    first = getattr(user, 'first_name', '')
+    last = getattr(user, 'last_name', '')
+    full_name = f"{first} {last}".strip()
+    
+    if not full_name:
+        full_name = user.email.split('@')[0].capitalize()
+
+    # NUEVO: Lógica segura para extraer la URL del Avatar
+    avatar_url = None
+    # 1. Verificamos que el usuario tenga un perfil (hasattr)
+    # 2. Verificamos que el campo avatar tenga un archivo asociado
+    if hasattr(user, 'profile') and user.profile.avatar:
+        # build_absolute_uri convierte "/media/avatars/foto.jpg" en "http://127.0.0.1:8000/media/avatars/foto.jpg"
+        avatar_url = request.build_absolute_uri(user.profile.avatar.url)
+
+    return {
+        "full_name": full_name,
+        "role_name": tenant.role.name,
+        "avatar_url": avatar_url
+    }
+    
 # ==========================================
 # ENDPOINTS DE ROLES (AISLADOS POR MARCA)
 # ==========================================

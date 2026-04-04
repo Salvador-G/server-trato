@@ -36,6 +36,9 @@ class UserManager(BaseUserManager):
 # =========================
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True, verbose_name="Email Address")
+    
+    first_name = models.CharField(max_length=150, blank=True, verbose_name="Nombres")
+    last_name = models.CharField(max_length=150, blank=True, verbose_name="Apellidos")
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False) # Requerido para entrar al panel admin de Django
@@ -54,3 +57,18 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+    
+# =========================
+# USER PROFILE
+# =========================
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
+    document_id = models.CharField(max_length=20, blank=True, verbose_name="DNI / CE")
+    phone = models.CharField(max_length=20, blank=True)
+    address = models.TextField(blank=True)
+    
+    # CAMBIO AQUÍ: Cambiamos 'upload_module' por 'upload_to'
+    avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
+
+    def __str__(self):
+        return f"Perfil de {self.user.email}"

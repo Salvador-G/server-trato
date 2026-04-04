@@ -89,6 +89,11 @@ class UserNestedOut(Schema):
     id: int
     email: str
 
+class UserMeOut(Schema):
+    full_name: str
+    role_name: str
+    avatar_url: Optional[str] = None # Por ahora puede ser null
+    
 class BrandUserOut(ModelSchema):
     user: UserNestedOut # Devolvemos el email del usuario
     role: RoleOut       # Devolvemos el detalle del rol (y sus permisos)

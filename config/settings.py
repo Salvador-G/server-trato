@@ -9,7 +9,7 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
-
+import os
 from pathlib import Path
 from datetime import timedelta
 from corsheaders.defaults import default_headers
@@ -63,6 +63,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -150,6 +151,18 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+# ==========================================
+# ARCHIVOS MULTIMEDIA (Avatares, PDFs, subidas de usuarios)
+# ==========================================
+MEDIA_URL = 'media/'
+
+# La carpeta física donde se guardan los archivos subidos por los usuarios (como avatares o PDFs)
+MEDIA_ROOT = BASE_DIR / 'media'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
@@ -175,7 +188,7 @@ JAZZMIN_SETTINGS = {
     
     
     # Esto es genial: Te pone un botón en el panel para personalizar colores (modo oscuro, colores de botones, etc.)
-    "show_ui_builder": True,
+    "show_ui_builder": False,
     
 }
 JAZZMIN_UI_TWEAKS = {
