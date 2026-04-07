@@ -12,11 +12,17 @@ from .models import Form, FormSubmission
 # ==========================================
 
 class FormOut(ModelSchema):
+    
+    target_workflow_id: Optional[int] = None
+    
     class Meta:
         model = Form
         fields = ['id', 'form_key', 'version', 'description', 'is_public', 'is_active', 'created_at']
 
 class FormDetailOut(ModelSchema):
+    
+    target_workflow_id: Optional[int] = None
+    
     class Meta:
         model = Form
         fields = ['id', 'form_key', 'version', 'structure', 'description', 'is_public', 'is_active', 'created_at']
@@ -27,6 +33,8 @@ class FormCreate(Schema):
     description: Optional[str] = ""
     is_public: bool = False
 
+    target_workflow_id: Optional[int] = None
+    
     @field_validator('structure')
     @classmethod # Pydantic V2 requiere @classmethod después de @field_validator
     def validate_schema_structure(cls, v):

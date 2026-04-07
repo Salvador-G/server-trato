@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Form, FormSubmission, WorkflowForm
+from .models import Form, FormSubmission
 
 @admin.register(Form)
 class FormAdmin(admin.ModelAdmin):
@@ -7,12 +7,13 @@ class FormAdmin(admin.ModelAdmin):
         "form_key",
         "brand",
         "version",
+        "target_workflow",
         "is_public",
         "is_active",
         "created_by",
         "created_at",
     )
-    list_filter = ("brand", "is_public", "is_active")
+    list_filter = ("brand", "target_workflow", "is_public", "is_active")
     search_fields = ("form_key", "brand__name")
     readonly_fields = ("created_at", "updated_at")
 
@@ -20,7 +21,7 @@ class FormAdmin(admin.ModelAdmin):
 class FormSubmissionAdmin(admin.ModelAdmin):
     list_display = (
         "submission_id",
-        "form",      # Cambiado de 'formulario' a 'form'
+        "form",
         "customer",  # Agregado para ver qué cliente respondió
         "source",
         "submitted_at",
@@ -40,7 +41,3 @@ class FormSubmissionAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return False
 
-@admin.register(WorkflowForm)
-class WorkflowFormAdmin(admin.ModelAdmin):
-    list_display = ("workflow", "form", "trigger_state")
-    list_filter = ("workflow__brand",)

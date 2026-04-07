@@ -14,8 +14,16 @@ class Form(models.Model):
 
     form_key = models.SlugField(help_text="Slug o ID público del formulario")
     
-    # ¡RENOMBRADO!
     structure = models.JSONField(help_text="Estructura en JSON del formulario")
+    
+    target_workflow = models.ForeignKey(
+        "workflows.Workflow", 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name="linked_forms",
+        help_text="¿A qué flujo se enviarán los datos? (Por defecto: Comercial)"
+    )
     
     version = models.PositiveIntegerField(default=1)
     description = models.CharField(max_length=255, blank=True)
@@ -77,30 +85,3 @@ class FormSubmission(models.Model):
     def __str__(self):
         return str(self.submission_id)
 
-# =========================
-# WORKFLOW FORM
-# =========================
-class WorkflowForm(models.Model):
-    workflow = models.ForeignKey(
-        "workflows.Workflow", 
-        on_delete=models.CASCADE
-    )
-    form = models.ForeignKey(
-        Form, 
-        on_delete=models.CASCADE
-    )
-    trigger_state = models.ForeignKey(
-        "workflows.WorkflowState", 
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Estado que se dispara al llenar este formulario"
-    )
-
-    class Meta:
-        unique_together = ("workflow", "form")
-        verbose_name = "Workflow Form"
-        verbose_name_plural = "Workflow Forms"
-
-    def __str__(self):
-        return f"{self.workflow} - {self.form}"

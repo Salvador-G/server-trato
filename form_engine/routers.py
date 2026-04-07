@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Max
 from django.utils.text import slugify
 from ninja_jwt.authentication import JWTAuth
+from workflows.models import Workflow
 
 from .models import Form, FormSubmission
 from .schemas import (
@@ -34,7 +35,7 @@ def create_form(request, payload: FormCreate, x_brand_id: int = Header(..., alia
     """Crea un formulario nuevo, autogenerando el slug y la versión."""
     tenant = get_current_tenant(request, x_brand_id)
     
-    # Generamos el slug a partir del nombre (Si envían 'untitled-form', el slug será ese)
+    # Generamos el slug a partir del nombre
     form_key = slugify(payload.name)
     
     # Buscamos la última versión
@@ -42,10 +43,15 @@ def create_form(request, payload: FormCreate, x_brand_id: int = Header(..., alia
     last_version = last_version_dict.get('version__max') or 0
     new_version = last_version + 1
     
-    # ¡NUEVO! Apagamos las versiones anteriores de ESTE form_key para evitar conflictos
+    # Apagamos las versiones anteriores de ESTE form_key para evitar conflictos
     if last_version > 0:
         Form.objects.filter(brand=tenant.brand, form_key=form_key).update(is_active=False, is_public=False)
     
+    # 🔥 BLINDAJE SAAS: Verificamos que si envían un target_workflow_id, pertenezca a SU marca
+    if payload.target_workflow_id:
+        if not Workflow.objects.filter(id=payload.target_workflow_id, brand=tenant.brand).exists():
+            raise HttpError(400, "El proceso seleccionado no es válido o no pertenece a tu cuenta.")
+
     # Creamos la nueva versión oficial
     form = Form.objects.create(
         brand=tenant.brand,
@@ -54,6 +60,7 @@ def create_form(request, payload: FormCreate, x_brand_id: int = Header(..., alia
         structure={"schema": payload.structure}, 
         description=payload.description,
         is_public=payload.is_public,
+        target_workflow_id=payload.target_workflow_id, # 🔥 NUEVO: Asignamos el campo
         created_by=request.user
     )
     return 201, form
