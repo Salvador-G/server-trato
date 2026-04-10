@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'communications',
     'documents',
     'customers',
+    'modules_api',
     'workflows',
     'form_engine',
 ]

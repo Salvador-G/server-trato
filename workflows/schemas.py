@@ -1,6 +1,6 @@
 # workflows/schemas.py
 from ninja import ModelSchema, Schema
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from .models import Workflow, WorkflowState, CustomerWorkflow, CustomerWorkflowHistory
 
@@ -47,19 +47,22 @@ class WorkflowHistoryOut(ModelSchema):
         return obj.user.email if obj.user else "Sistema"
 
 class CustomerWorkflowOut(ModelSchema):
-    # Lectura explicita de las claves foraneas
     customer_id: int
     workflow_id: int
     current_state_id: int
-    # Campos resueltos
+    
     customer_name: str = None
-    workflow_code: str = None # Ej: 'trade'
+    workflow_code: str = None 
     current_state_code: str = None 
     assigned_to_email: Optional[str] = None
     
+    # ---> NUEVO: Exponemos la metadata al frontend <---
+    metadata: Dict[str, Any] 
+    
     class Meta:
         model = CustomerWorkflow
-        fields = ['id', 'started_at', 'finished_at']
+        # Añadido 'metadata' a los fields
+        fields = ['id', 'started_at', 'finished_at', 'metadata']
 
     @staticmethod
     def resolve_customer_name(obj: CustomerWorkflow) -> str:
@@ -84,11 +87,17 @@ class CustomerWorkflowOut(ModelSchema):
 class CustomerWorkflowCreate(Schema):
     """Payload para ingresar a un cliente al flujo de 'Trade' (u otro)"""
     customer_id: int
-    workflow_code: str # Ej: Recibimos 'trade', no el ID, es más limpio para el frontend
+    workflow_code: str 
     assigned_to_id: Optional[int] = None
     initial_comment: Optional[str] = "Proceso iniciado automáticamente."
+    
+    # ---> NUEVO: Permite inyectar datos iniciales desde el formulario <---
+    metadata: Optional[Dict[str, Any]] = {}
 
 class WorkflowTransition(Schema):
     """Payload para avanzar al cliente al siguiente estado"""
-    new_state_code: str # Ej: 'approved', 'rejected'
+    new_state_code: str 
     comment: Optional[str] = None
+    
+    # ---> NUEVO: Permite actualizar (merge) los datos comerciales al cambiar de estado <---
+    metadata_update: Optional[Dict[str, Any]] = None

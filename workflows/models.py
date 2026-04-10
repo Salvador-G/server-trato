@@ -105,6 +105,14 @@ class CustomerWorkflow(models.Model):
         verbose_name="Asignado a"
     )
 
+    # ---> NUEVO CAMPO: La Pizarra de Negociación <---
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="Datos Comerciales Vivos",
+        help_text="Contexto actual del flujo (ej. plan negociado, montos, credenciales)"
+    )
+
     started_at = models.DateTimeField(auto_now_add=True, verbose_name="Iniciado el")
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name="Finalizado el")
     updated_at = models.DateTimeField(auto_now=True)

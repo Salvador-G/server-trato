@@ -9,6 +9,8 @@ from form_engine.routers import router as form_router
 from communications.routers import router as communications_router
 from documents.routers import router as docs_router
 
+from modules_api.api import modules_router
+
 # Instanciamos la API global
 api = NinjaAPI(
     title="Trato API",
@@ -41,6 +43,9 @@ api.add_router("/documents", docs_router)
 
 # Router de form engine (formularios dinámicos)
 api.add_router("/form-engine", form_router)
+
+# Router de módulos específicos para el frontend (BFF)
+api.add_router("/modules", modules_router)
 
 # Manejador de excepciones obligatorio para ninja_jwt
 @api.exception_handler(exceptions.APIException)
