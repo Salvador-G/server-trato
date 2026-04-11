@@ -16,8 +16,9 @@ class WorkflowStateAdmin(admin.ModelAdmin):
 class CustomerWorkflowAdmin(admin.ModelAdmin):
     list_display = ("customer", "workflow", "current_state", "assigned_to", "started_at", "finished_at")
     list_filter = ("workflow__brand", "workflow", "current_state")
-
+    
 @admin.register(CustomerWorkflowHistory)
 class CustomerWorkflowHistoryAdmin(admin.ModelAdmin):
     list_display = ("customer_workflow", "state", "user", "changed_at")
     readonly_fields = ("changed_at",)
+    

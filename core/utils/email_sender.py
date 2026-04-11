@@ -21,11 +21,17 @@ def send_dynamic_email(email_config, to_address: str, subject: str, body: str, f
 
     # 3. Nos conectamos y enviamos
     try:
-        server = smtplib.SMTP(email_config.smtp_host, email_config.smtp_port)
-        
-        if email_config.use_tls:
-            server.starttls() # Aseguramos la conexión
-            
+        # === ¡CAMBIO CLAVE AQUÍ! ===
+        if email_config.smtp_port == 465:
+            # El puerto 465 requiere conexión segura inmediata (SMTP_SSL)
+            server = smtplib.SMTP_SSL(email_config.smtp_host, email_config.smtp_port)
+        else:
+            # El puerto 587 u otros usan conexión normal y luego starttls()
+            server = smtplib.SMTP(email_config.smtp_host, email_config.smtp_port)
+            if email_config.use_tls:
+                server.starttls()
+                
+        # Iniciamos sesión y disparamos
         server.login(email_config.smtp_username, plain_password)
         server.send_message(msg)
         server.quit()

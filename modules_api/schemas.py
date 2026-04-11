@@ -52,6 +52,7 @@ class TradeTimelineEvent(Schema):
     description: str  # Ej: 'a través de Página Web', 'Asunto: Cotización'
     date: str         # Ej: '17/12/2025 - 10:30 AM'
     color: str        # Ej: '#10b981' (verde), '#3b82f6' (azul)
+    body: Optional[str] = None
 
 class TradeEmailDraft(Schema):
     """Para la tarjeta de Redactar Mensaje"""

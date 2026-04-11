@@ -35,19 +35,22 @@ def create_email_config(request, payload: EmailConfigCreate, x_brand_id: int = H
     encrypted_imap = encrypt_password(payload.imap_password)
     
     # 2. Creamos la configuración
-    config = EmailConfiguration.objects.create(
+    config, created = EmailConfiguration.objects.update_or_create(
         brand=tenant.brand,
         email_address=payload.email_address,
-        smtp_host=payload.smtp_host,
-        smtp_port=payload.smtp_port,
-        smtp_username=payload.smtp_username,
-        smtp_password=encrypted_smtp,
-        use_tls=payload.use_tls,
-        imap_host=payload.imap_host,
-        imap_port=payload.imap_port,
-        imap_username=payload.imap_username,
-        imap_password=encrypted_imap,
-        use_ssl=payload.use_ssl
+        defaults={
+            'smtp_host': payload.smtp_host,
+            'smtp_port': payload.smtp_port,
+            'smtp_username': payload.smtp_username,
+            'smtp_password': encrypted_smtp,
+            'use_tls': payload.use_tls,
+            'imap_host': payload.imap_host,
+            'imap_port': payload.imap_port,
+            'imap_username': payload.imap_username,
+            'imap_password': encrypted_imap,
+            'use_ssl': payload.use_ssl,
+            'is_active': True
+        }
     )
     return 201, config
 

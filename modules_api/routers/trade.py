@@ -145,6 +145,7 @@ def get_trade_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias
             history_events.append({
                 "status": status_text,
                 "description": f"Asunto: {item.subject or 'Sin asunto'}",
+                "body": item.body if hasattr(item, 'body') else None,
                 "date": localtime(item.created_at).strftime("%d/%m/%Y - %I:%M %p"),
                 "color": color
             })
