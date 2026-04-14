@@ -12,7 +12,7 @@ class CustomUserChangeForm(UserChangeForm):
 class CustomUserCreationForm(UserCreationForm):
     class Meta(UserCreationForm.Meta):
         model = User
-        fields = ('email',)
+        fields = ('email', 'first_name', 'last_name') # Ahora también pedimos nombres al crear un usuario
 
 # NUEVO: Creamos un "Inline" para que el Perfil se edite dentro del Usuario
 class UserProfileInline(admin.StackedInline):
@@ -49,6 +49,6 @@ class CustomUserAdmin(UserAdmin):
         (None, {
             'classes': ('wide',),
             # Opcional: También podemos pedirlos al momento de crear el usuario
-            'fields': ('email', 'password', 'first_name', 'last_name'), 
+            'fields': ('email', 'password1', 'password2', 'first_name', 'last_name'), 
         }),
     )

@@ -154,3 +154,137 @@ def get_workflow_history(request, cw_id: int, x_brand_id: int = Header(..., alia
     cw = get_object_or_404(CustomerWorkflow, id=cw_id, workflow__brand=tenant.brand)
     
     return cw.history_logs.select_related('state', 'user').order_by('-changed_at')
+
+@router.post("/{cw_id}/derive-to-contract", response={200: CustomerWorkflowOut})
+def derive_to_contract(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    trade_cw = get_object_or_404(CustomerWorkflow, id=cw_id, workflow__brand=tenant.brand, workflow__code='trade')
+    
+    if trade_cw.finished_at:
+        raise HttpError(400, "Este proceso ya está finalizado y no puede derivarse.")
+
+    # === NUEVO: VALIDACIÓN DE PROPIEDAD ===
+    if trade_cw.assigned_to and trade_cw.assigned_to != request.user:
+        dueño = f"{trade_cw.assigned_to.first_name} {trade_cw.assigned_to.last_name}".strip() or trade_cw.assigned_to.email
+        raise HttpError(403, f"Acceso denegado. Este lead está siendo atendido por {dueño}.")
+
+    estado_ganado = get_object_or_404(WorkflowState, code='won', workflow=trade_cw.workflow)
+    workflow_contract = get_object_or_404(Workflow, code='contract', brand=tenant.brand)
+    estado_inicial_contract = workflow_contract.states.order_by('sort_order').first()
+
+    with transaction.atomic():
+        # Auto-asignar si era un lead huérfano de la web
+        if trade_cw.assigned_to is None:
+            trade_cw.assigned_to = request.user
+            
+        # --- A. CERRAR EL TRADE ---
+        trade_cw.current_state = estado_ganado
+        trade_cw.finished_at = timezone.now()
+        trade_cw.save()
+        
+        CustomerWorkflowHistory.objects.create(
+            customer_workflow=trade_cw,
+            state=estado_ganado,
+            user=request.user,
+            comment="Negocio ganado. Derivado a Operaciones/Legal."
+        )
+
+        # --- B. CREAR EL NUEVO CONTRATO ---
+        # Rescatamos la metadata actual y le añadimos la referencia de origen
+        metadata_traspaso = trade_cw.metadata if isinstance(trade_cw.metadata, dict) else {}
+        metadata_traspaso['origen_trade_id'] = trade_cw.id
+
+        nuevo_contract = CustomerWorkflow.objects.create(
+            customer=trade_cw.customer,
+            workflow=workflow_contract,
+            current_state=estado_inicial_contract,
+            assigned_to_id=trade_cw.assigned_to_id, # Hereda el mismo responsable inicial
+            metadata=metadata_traspaso
+        )
+        
+        CustomerWorkflowHistory.objects.create(
+            customer_workflow=nuevo_contract,
+            state=estado_inicial_contract,
+            user=request.user,
+            comment="Proceso iniciado desde derivación de Trade."
+        )
+
+    # Devolvemos el nuevo contrato para que el Front pueda redirigir
+    return 200, nuevo_contract
+
+@router.post("/{cw_id}/decline", response={200: dict})
+def decline_trade(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    trade_cw = get_object_or_404(CustomerWorkflow, id=cw_id, workflow__brand=tenant.brand, workflow__code='trade')
+    
+    if trade_cw.finished_at:
+        raise HttpError(400, "Este proceso ya está finalizado.")
+
+    # === NUEVO: VALIDACIÓN DE PROPIEDAD ===
+    if trade_cw.assigned_to and trade_cw.assigned_to != request.user:
+        dueño = f"{trade_cw.assigned_to.first_name} {trade_cw.assigned_to.last_name}".strip() or trade_cw.assigned_to.email
+        raise HttpError(403, f"Acceso denegado. Este lead está siendo atendido por {dueño}.")
+
+    estado_perdido = get_object_or_404(WorkflowState, code='lost', workflow=trade_cw.workflow)
+
+    with transaction.atomic():
+        # Auto-asignar si era un lead huérfano de la web
+        if trade_cw.assigned_to is None:
+            trade_cw.assigned_to = request.user
+            
+        trade_cw.current_state = estado_perdido
+        trade_cw.finished_at = timezone.now()
+        trade_cw.save()
+        
+        CustomerWorkflowHistory.objects.create(
+            customer_workflow=trade_cw,
+            state=estado_perdido,
+            user=request.user,
+            comment="El negocio fue marcado como perdido por el usuario."
+        )
+
+    return 200, {"success": True, "message": "Proceso marcado como perdido."}
+
+@router.post("/{cw_id}/reassign", response={200: dict})
+def reassign_workflow(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    """
+    Permite a un usuario tomar el control de un proceso (reasignárselo a sí mismo),
+    útil cuando el asesor original está ausente o deshabilitado.
+    """
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    with transaction.atomic():
+        try:
+            cw = CustomerWorkflow.objects.select_for_update().get(
+                id=cw_id, 
+                workflow__brand=tenant.brand
+            )
+        except CustomerWorkflow.DoesNotExist:
+            raise HttpError(404, "Proceso no encontrado")
+            
+        if cw.finished_at:
+            raise HttpError(400, "No puedes reasignar un proceso que ya está finalizado.")
+            
+        # Evitar reasignarse algo que ya es tuyo
+        if cw.assigned_to == request.user:
+            return 200, {"success": True, "message": "Este lead ya está asignado a ti."}
+            
+        dueño_anterior = "Nadie (Huérfano)"
+        if cw.assigned_to:
+            dueño_anterior = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
+            
+        # Efectuar el cambio
+        cw.assigned_to = request.user
+        cw.save()
+        
+        # Registrar en la auditoría
+        CustomerWorkflowHistory.objects.create(
+            customer_workflow=cw,
+            state=cw.current_state,
+            user=request.user,
+            comment=f"Lead reasignado manualmente. Dueño anterior: {dueño_anterior}."
+        )
+        
+    return 200, {"success": True, "message": "Te has asignado este cliente exitosamente."}

@@ -4,6 +4,7 @@ from ninja.errors import HttpError
 from typing import List
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.db import transaction
 from ninja_jwt.authentication import JWTAuth
 
 from .models import EmailConfiguration, Conversation, Message
@@ -11,7 +12,7 @@ from .schemas import (
     EmailConfigOut, EmailConfigCreate, 
     ConversationOut, MessageOut, SendMessagePayload
 )
-from workflows.models import CustomerWorkflow
+from workflows.models import CustomerWorkflow, CustomerWorkflowHistory
 from core.dependencies import get_current_tenant
 from core.utils.encryption import encrypt_password
 from core.utils.email_sender import send_dynamic_email  # Función hipotética para enviar emails usando smtplib o similar
@@ -73,50 +74,73 @@ def list_messages(request, conversation_id: int, x_brand_id: int = Header(..., a
 @router.post("/messages/send", response={201: MessageOut})
 def send_message(request, payload: SendMessagePayload, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     tenant = get_current_tenant(request, x_brand_id)
-    cw = get_object_or_404(CustomerWorkflow, id=payload.customer_workflow_id, workflow__brand=tenant.brand)
-
-    # Lógica de Alias Dinámico (Shared Inbox)
-    if payload.channel == 'email':
-        email_config = cw.workflow.email_config
-        if not email_config:
-            raise HttpError(400, f"El proceso '{cw.workflow.name}' no tiene una bandeja de correo configurada.")
-        
-        sender_name = f"{request.user.first_name} {request.user.last_name}" if request.user.first_name else f"Equipo de {cw.workflow.name}"
-        from_address = f"{sender_name} <{email_config.email_address}>"
-    else:
-        from_address = "WhatsApp API"
-
-    # Creamos/Obtenemos el hilo
-    conversation, _ = Conversation.objects.get_or_create(customer_workflow=cw, channel=payload.channel)
-
-    # Guardamos en BD inicialmente como 'draft' (por si el envío falla)
-    msg = Message.objects.create(
-        conversation=conversation,
-        direction='outbound',
-        subject=payload.subject,
-        body=payload.body,
-        to_address=payload.to_address,
-        from_address=from_address, 
-        status='draft', # Empieza como borrador
-    )
     
-    # === ¡LA MAGIA DEL ENVÍO REAL! ===
-    if payload.channel == 'email':
-        success, error_msg = send_dynamic_email(
-            email_config=email_config,
-            to_address=payload.to_address,
+    with transaction.atomic():
+        # 1. BLOQUEO ANTI-COLISIÓN
+        try:
+            cw = CustomerWorkflow.objects.select_for_update(nowait=False).get(
+                id=payload.customer_workflow_id, 
+                workflow__brand=tenant.brand
+            )
+        except CustomerWorkflow.DoesNotExist:
+            raise HttpError(404, "Proceso no encontrado")
+
+        # 2. REGLAS DE ASIGNACIÓN
+        if cw.assigned_to is None:
+            # Auto-asignar al primer valiente que responde
+            cw.assigned_to = request.user
+            cw.save()
+            
+            CustomerWorkflowHistory.objects.create(
+                customer_workflow=cw,
+                state=cw.current_state,
+                user=request.user,
+                comment=f"Lead tomado automáticamente por primera interacción."
+            )
+        elif cw.assigned_to != request.user:
+            # Prevenir que otro asesor se meta si ya tiene dueño
+            dueño = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
+            raise HttpError(403, f"Este lead ya está siendo atendido por {dueño}. No puedes enviarle mensajes.")
+
+        # 3. LÓGICA DE ENVÍO ORIGINAL
+        if payload.channel == 'email':
+            email_config = cw.workflow.email_config
+            if not email_config:
+                raise HttpError(400, f"El proceso '{cw.workflow.name}' no tiene una bandeja de correo configurada.")
+            
+            sender_name = f"{request.user.first_name} {request.user.last_name}".strip() or f"Equipo de {cw.workflow.name}"
+            from_address = f"{sender_name} <{email_config.email_address}>"
+        else:
+            from_address = "WhatsApp API"
+
+        conversation, _ = Conversation.objects.get_or_create(customer_workflow=cw, channel=payload.channel)
+
+        msg = Message.objects.create(
+            conversation=conversation,
+            direction='outbound',
             subject=payload.subject,
             body=payload.body,
-            from_header=from_address
+            to_address=payload.to_address,
+            from_address=from_address, 
+            status='draft', 
         )
         
-        if success:
-            msg.status = 'sent'
-            msg.sent_at = timezone.now()
-        else:
-            msg.status = 'error'
-            msg.metadata = {"error_detail": error_msg} # Guardamos el porqué falló
+        if payload.channel == 'email':
+            success, error_msg = send_dynamic_email(
+                email_config=email_config,
+                to_address=payload.to_address,
+                subject=payload.subject,
+                body=payload.body,
+                from_header=from_address
+            )
             
-        msg.save()
+            if success:
+                msg.status = 'sent'
+                msg.sent_at = timezone.now()
+            else:
+                msg.status = 'error'
+                msg.metadata = {"error_detail": error_msg} 
+                
+            msg.save()
 
     return 201, msg

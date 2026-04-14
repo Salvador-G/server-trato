@@ -1,4 +1,6 @@
 # modules_api/schemas.py
+from datetime import datetime
+
 from ninja import Schema
 from typing import Optional, List, Dict, Any
 
@@ -33,7 +35,7 @@ class SharedAsideOut(Schema):
 class TradeListRowOut(Schema):
     """Esquema diseñado para la tabla/Datatable de TradeList.vue"""
     id: int
-    fecha: str
+    fecha: datetime
     ruc: str
     razonSocial: str
     personal: str
@@ -43,14 +45,14 @@ class TradeStepOut(Schema):
     """Para el Stepper Horizontal (Pipeline)"""
     nombre: str
     estado: str  # Valores CSS: 'completado', 'pendiente' (Vue manejará la opacidad)
-    fecha: str
+    fecha: Optional[datetime] = None
     tipo: str = "envio" # Opcional para iconos
 
 class TradeTimelineEvent(Schema):
     """Para el PrimeVue Timeline Vertical (Feed de actividad)"""
     status: str       # Ej: 'Lead creado', 'Correo enviado', 'Cliente respondió'
     description: str  # Ej: 'a través de Página Web', 'Asunto: Cotización'
-    date: str         # Ej: '17/12/2025 - 10:30 AM'
+    date: datetime         # Ej: '17/12/2025 - 10:30 AM'
     color: str        # Ej: '#10b981' (verde), '#3b82f6' (azul)
     body: Optional[str] = None
 
@@ -66,6 +68,9 @@ class TradeMainOut(Schema):
     historialPasos: List[TradeStepOut]
     historyEvents: List[TradeTimelineEvent]
     emailDraft: TradeEmailDraft
+    assigned_to_id: Optional[int] = None
+    assigned_to_name: Optional[str] = None
+    current_user_id: int
     
 class ManualTradeCreate(Schema):
     # --- 1. DATOS DUROS (Entidades SQL) ---
