@@ -5,9 +5,42 @@ from django.utils import timezone
 User = settings.AUTH_USER_MODEL
 
 # =========================
-# BRAND (Tenant / Marca SaaS)
+# 1. LEGAL ENTITY (La Matriz / Empresa Legal)
+# =========================
+class LegalEntity(models.Model):
+    # AQUÍ SÍ DEBE SER ÚNICO: En todo tu SaaS, un RUC solo se registra una vez.
+    tax_id = models.CharField(
+        max_length=50,
+        unique=True, 
+        verbose_name="RUC / ID Fiscal"
+    )
+    legal_name = models.CharField(max_length=255, verbose_name="Razón Social")
+    fiscal_address = models.TextField(blank=True, null=True, verbose_name="Dirección Fiscal")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Legal Entity"
+        verbose_name_plural = "Legal Entities"
+
+    def __str__(self):
+        return f"{self.legal_name} ({self.tax_id})"
+
+# =========================
+# 2. BRAND (Tenant / Marca Comercial)
 # =========================
 class Brand(models.Model):
+    # ---> NUEVO: Relación Muchos a Uno <---
+    # N Marcas pueden apuntar a la misma LegalEntity
+    legal_entity = models.ForeignKey(
+        LegalEntity,
+        on_delete=models.PROTECT, # Usamos PROTECT para no borrar la empresa por error si tiene marcas activas
+        related_name="brands",
+        null=True,  # Permitimos null temporalmente para que no exploten tus migraciones actuales
+        blank=True
+    )
+    
     name = models.CharField(max_length=150, verbose_name="Nombre Comercial")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -19,33 +52,6 @@ class Brand(models.Model):
 
     def __str__(self):
         return self.name
-    
-# =========================
-# BRAND LEGAL PROFILE
-# =========================
-class BrandLegalProfile(models.Model):
-    brand = models.OneToOneField(
-        Brand, 
-        on_delete=models.CASCADE, 
-        related_name="legal_profile"
-    )
-    tax_id = models.CharField(
-        max_length=50, 
-        unique=True, # ¡Blindaje! Dos marcas no pueden usar el mismo RUC para pagar el SaaS
-        verbose_name="RUC / ID Fiscal"
-    )
-    legal_name = models.CharField(max_length=255, verbose_name="Razón Social")
-    fiscal_address = models.TextField(blank=True, null=True, verbose_name="Dirección Fiscal")
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "Brand Legal Profile"
-        verbose_name_plural = "Brand Legal Profiles"
-
-    def __str__(self):
-        return f"{self.legal_name} ({self.tax_id})"
 
 # =========================
 # PERMISSION (Diccionario Global de Permisos)
@@ -69,21 +75,18 @@ class Permission(models.Model):
 # ROLE (Aislado por Marca)
 # =========================
 class Role(models.Model):
-    # ¡CLAVE SAAS! El rol pertenece a una marca específica
+    # El rol sigue perteneciendo a una marca específica (Aislamiento operativo)
     brand = models.ForeignKey(Brand, on_delete=models.CASCADE, related_name="roles") 
     
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
-    
-    # Crea la tabla pivot: role_permission automáticamente
     permissions = models.ManyToManyField(Permission, related_name="roles", blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        # Una misma marca no puede tener dos roles que se llamen igual
         unique_together = ("brand", "name") 
         verbose_name = "Role"
         verbose_name_plural = "Roles"

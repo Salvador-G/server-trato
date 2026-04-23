@@ -1,4 +1,5 @@
-from ninja import ModelSchema
+from ninja import ModelSchema, Schema
+from typing import Optional
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -24,10 +25,31 @@ class UserCreate(ModelSchema):
         fields = ['email', 'password']
         
 class UserUpdate(ModelSchema):
-    """Esquema para actualizar datos de un usuario existente"""
+    """Esquema de usuario normal: Solo puede editar su propia info básica"""
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name']
+        config = { "extra": "ignore" }
+
+class AdminUserUpdate(ModelSchema):
+    """Esquema para Superadmins: Permite escalar privilegios y accesos"""
     class Meta:
         model = User
         fields = ['is_active', 'is_staff', 'is_superuser']
-        config = {
-            "extra": "ignore" # Ignora campos extra si el frontend los envía por error
-        }
+        config = { "extra": "ignore" }
+        
+
+
+class EmployeeCreateInput(Schema):
+    """Payload que envía el Admin de la marca para crear un empleado"""
+    # Obligatorios
+    email: str
+    password: str
+    first_name: str
+    last_name: str
+    role_id: int  # <-- Crucial para la tabla BrandUser
+    
+    # Opcionales (Perfil legal/operativo)
+    document_id: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None

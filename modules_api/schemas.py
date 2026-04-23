@@ -84,3 +84,16 @@ class ManualTradeCreate(Schema):
     # En lugar de tipar campo por campo comercial, recibimos un diccionario.
     # Así, si mañana en Vue agregas "presupuesto", no tienes que tocar este archivo.
     detalles_comerciales: Dict[str, Any] = {}
+    
+# ================================================
+# SCHEMAS: CONTRACT (Contratos - Columna Derecha)
+# ================================================
+
+class ContractListRowOut(Schema):
+    """Esquema para cada fila de la tabla en ContractList"""
+    id: int
+    fecha: datetime
+    ruc: str
+    razonSocial: str
+    personal: str
+    estadoId: str
