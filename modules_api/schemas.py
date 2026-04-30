@@ -97,3 +97,29 @@ class ContractListRowOut(Schema):
     razonSocial: str
     personal: str
     estadoId: str
+    
+# ================================================
+# SCHEMAS: BILLING (Facturación - Columna Derecha)
+# ================================================
+
+class BillingListRowOut(Schema):
+    """Esquema para cada fila de la tabla en BillingList"""
+    id: int
+    fecha: datetime
+    ruc: str
+    razonSocial: str
+    personal: str
+    estadoId: str
+    
+# ================================================
+# SCHEMAS: SUPPORT (Soporte / Onboarding - Columna Derecha)
+# ================================================
+
+class SupportListRowOut(Schema):
+    """Esquema para cada fila de la tabla en SupportList"""
+    id: int
+    fecha: datetime
+    ruc: str
+    razonSocial: str
+    personal: str
+    estadoId: str

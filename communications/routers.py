@@ -12,7 +12,7 @@ from .schemas import (
     EmailConfigOut, EmailConfigCreate, 
     ConversationOut, MessageOut, SendMessagePayload
 )
-from workflows.models import CustomerWorkflow, CustomerWorkflowHistory
+from workflows.models import CustomerWorkflow, CustomerWorkflowHistory, WorkflowState
 from core.dependencies import get_current_tenant
 from core.utils.encryption import encrypt_password
 from core.utils.email_sender import send_dynamic_email  # Función hipotética para enviar emails usando smtplib o similar
@@ -137,10 +137,35 @@ def send_message(request, payload: SendMessagePayload, x_brand_id: int = Header(
             if success:
                 msg.status = 'sent'
                 msg.sent_at = timezone.now()
+                
+                # ==========================================
+                # NUEVO: TRANSICIÓN AUTOMÁTICA DE ESTADO
+                # ==========================================
+                if payload.advance_state_to:
+                    try:
+                        new_state = WorkflowState.objects.get(
+                            workflow=cw.workflow, 
+                            code=payload.advance_state_to
+                        )
+                        # Solo avanzamos si realmente es un estado diferente
+                        if cw.current_state != new_state:
+                            cw.current_state = new_state
+                            cw.save()
+                            
+                            CustomerWorkflowHistory.objects.create(
+                                customer_workflow=cw,
+                                state=new_state,
+                                user=request.user,
+                                comment=f"Fase avanzada a '{new_state.name}' tras enviar documento/correo."
+                            )
+                    except WorkflowState.DoesNotExist:
+                        # Si envían un código inválido, lo ignoramos para no romper el envío del correo
+                        pass
+
             else:
                 msg.status = 'error'
                 msg.metadata = {"error_detail": error_msg} 
                 
-            msg.save()
+        msg.save()
 
     return 201, msg

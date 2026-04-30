@@ -62,3 +62,4 @@ class SendMessagePayload(Schema):
     body: str
     subject: Optional[str] = None
     to_address: str
+    advance_state_to: Optional[str] = None

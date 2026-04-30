@@ -1,30 +1,30 @@
-# modules_api/routers/contract.py
+# modules_api/routers/billing.py
 from ninja import Router, Header
+from ninja.errors import HttpError
 from ninja_jwt.authentication import JWTAuth
 from typing import List
 from django.utils import timezone
-from ninja.errors import HttpError
 from django.shortcuts import get_object_or_404
 from itertools import chain
 from communications.models import Message
-from workflows.models import Workflow, WorkflowState, CustomerWorkflow, CustomerWorkflowHistory 
+from workflows.models import CustomerWorkflow, WorkflowState, Workflow, CustomerWorkflowHistory
 from core.dependencies import get_current_tenant
-from ..schemas import ContractListRowOut, TradeMainOut
+from ..schemas import BillingListRowOut, TradeMainOut
 
-router = Router(tags=["Modules API - Contract (Operaciones/Legal)"], auth=JWTAuth())
+router = Router(tags=["Modules API - Billing (Facturación/Cobranza)"], auth=JWTAuth())
 
-@router.get("/active", response=List[ContractListRowOut])
-def list_active_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+@router.get("/active", response=List[BillingListRowOut])
+def list_active_billing(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """
-    Devuelve la lista de contratos en curso (no finalizados).
-    Alimentará la vista de ContractList.vue
+    Devuelve la lista de flujos de facturación en curso.
+    Alimentará la vista de BillingList.vue
     """
     tenant = get_current_tenant(request, x_brand_id)
     
-    # Filtramos: Marca actual, flujo de 'contract', y que no estén finalizados
+    # Filtramos: Marca actual, flujo de 'billing', y que no estén finalizados
     cws = CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
-        workflow__code='contract', 
+        workflow__code='billing', # <-- Código del flujo de facturación
         finished_at__isnull=True
     ).select_related(
         'customer__company', 
@@ -39,11 +39,10 @@ def list_active_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-
         cliente = cw.customer
         empresa = cliente.company
         
-        # Lógica de fallback para B2B vs B2C
         ruc = empresa.tax_id if empresa else "N/A"
         razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
         
-        # Personal asignado (Heredado de Ventas al momento de derivar)
+        # Personal asignado (El encargado de facturación)
         if cw.assigned_to:
             personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
         else:
@@ -51,7 +50,7 @@ def list_active_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-
 
         resultados.append({
             "id": cw.id,
-            "fecha": cw.started_at, # Pasamos el objeto datetime crudo, el frontend lo formatea
+            "fecha": cw.started_at,
             "ruc": ruc,
             "razonSocial": razon_social,
             "personal": personal,
@@ -61,17 +60,19 @@ def list_active_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-
     return resultados
 
 @router.get("/active/{cw_id}/main", response=TradeMainOut)
-def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+def get_billing_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    """
+    Devuelve la información detallada de un flujo de facturación.
+    """
     tenant = get_current_tenant(request, x_brand_id)
     
-    # Validamos que sea un contrato y pertenezca a la marca
     cw = get_object_or_404(
         CustomerWorkflow.objects.select_related(
             'workflow', 'current_state', 'customer__contact'
         ), 
         id=cw_id, 
         workflow__brand=tenant.brand,
-        workflow__code='contract' # <-- IMPORTANTE
+        workflow__code='billing' 
     )
 
     metadata = cw.metadata or {}
@@ -94,7 +95,7 @@ def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., al
             "tipo": "envio" 
         })
 
-    # --- HISTORIAL OMNICANAL (Workflow Logs + Emails) ---
+    # --- HISTORIAL OMNICANAL ---
     history_events = []
     messages = Message.objects.filter(conversation__customer_workflow=cw).select_related('conversation')
 
@@ -106,17 +107,19 @@ def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., al
 
     for item in combined_timeline:
         if hasattr(item, 'state'):
+            # Evento de cambio de estado
             color = "#10b981" if item.state.is_final else "#d1d5db"
             history_events.append({
                 "status": f"Fase: {item.state.name}",
-                "description": item.comment or "Actualización de contrato.",
+                "description": item.comment or "Actualización de facturación.",
                 "date": item.changed_at, 
                 "color": color
             })
         else:
+            # Evento de mensaje/correo
             is_inbound = item.direction == 'inbound'
-            color = "#f59e0b" if is_inbound else "#3b82f6"
-            status_text = "Cliente respondió" if is_inbound else "Correo enviado"
+            color = "#f59e0b" if is_inbound else "#8b5cf6" # Usamos morado para cobros enviados, naranja para respuestas
+            status_text = "Constancia/Respuesta recibida" if is_inbound else "Factura enviada"
             history_events.append({
                 "status": status_text,
                 "description": f"Asunto: {item.subject or 'Sin asunto'}",
@@ -126,14 +129,16 @@ def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., al
             })
 
     # --- REDACTAR CORREO (Draft Inicial) ---
-    esperando_respuesta = cw.current_state.code == 'review' # Solo espera respuesta si está en revisión de cliente
-    servicio = metadata.get("servicio_requerido", "")
-    asunto = f"Contrato de Servicio - {servicio}" if servicio else "Documentación Legal"
+    # En Billing, el estado de espera suele llamarse 'waiting_payment' o 'esperando_abono'
+    esperando_respuesta = cw.current_state.code in ['waiting_payment', 'esperando_abono'] 
+    
+    servicio = metadata.get("servicio_requerido", "los servicios prestados")
+    asunto = f"Factura correspondiente a {servicio}"
     
     email_draft = {
         "to": contact_email,
         "subject": asunto,
-        "body": "Estimados,\n\nAdjunto enviamos el borrador del contrato para su revisión y conformidad..."
+        "body": "Estimados,\n\nAdjuntamos la factura correspondiente a nuestros servicios. Quedamos a la espera de la constancia de abono (voucher) respondiendo a este mismo correo o enviando el archivo adjunto.\n\nAtentamente,\nEl Equipo de Administración."
     }
 
     assigned_id = cw.assigned_to_id
@@ -151,64 +156,72 @@ def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., al
         "current_user_id": request.user.id
     }
     
-@router.post("/active/{cw_id}/mark-signed")
-def mark_as_signed(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    
+@router.post("/active/{cw_id}/mark-paid")
+def mark_as_paid(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """
-    Marca el contrato como firmado y deriva automáticamente el cliente 
-    al módulo de Facturación (Billing).
+    Marca la facturación como pagada y deriva automáticamente el cliente 
+    al módulo de Soporte (Support).
     """
     tenant = get_current_tenant(request, x_brand_id)
     
+    # 1. Obtenemos el flujo de facturación actual
     cw = get_object_or_404(
         CustomerWorkflow, 
         id=cw_id, 
         workflow__brand=tenant.brand,
-        workflow__code='contract',
-        finished_at__isnull=True
+        workflow__code='billing',
+        finished_at__isnull=True 
     )
 
     if cw.assigned_to_id and cw.assigned_to_id != request.user.id:
-        raise HttpError(403, "No puedes marcar este contrato porque está asignado a otro legal.")
+        raise HttpError(403, "No puedes marcar este abono porque está asignado a otro ejecutivo.")
 
+    # 2. Buscamos el estado final de Billing
     try:
-        final_state = WorkflowState.objects.get(workflow=cw.workflow, code='signed')
+        final_state = WorkflowState.objects.get(workflow=cw.workflow, code='paid')
     except WorkflowState.DoesNotExist:
-        raise HttpError(400, "El estado final 'signed' no existe en el flujo legal.")
+        raise HttpError(400, "El estado final 'paid' no existe en el flujo de facturación.")
 
+    # 3. Cerramos el flujo de Facturación
     cw.current_state = final_state
     cw.finished_at = timezone.now()
     cw.save()
 
+    # Usamos tu modelo CustomerWorkflowHistory
     CustomerWorkflowHistory.objects.create(
         customer_workflow=cw,
         state=final_state,
-        user=request.user,
-        comment="Contrato firmado validado. Fase legal completada."
+        user=request.user, # Tu campo se llama 'user'
+        comment="Constancia de abono verificada. Facturación completada."
     )
 
-    # Derivamos a Billing
+    # ==========================================
+    # 4. Derivamos al módulo de Support
+    # ==========================================
     try:
-        billing_workflow = Workflow.objects.get(brand=tenant.brand, code='billing')
-        initial_billing_state = billing_workflow.states.order_by('sort_order').first()
+        support_workflow = Workflow.objects.get(brand=tenant.brand, code='support')
+        # Obtenemos el primer estado basándonos en tu sort_order
+        initial_support_state = support_workflow.states.order_by('sort_order').first()
     except Workflow.DoesNotExist:
-        raise HttpError(400, "El flujo 'billing' no está configurado para esta marca.")
+        raise HttpError(400, "El flujo 'support' no está configurado para esta marca.")
 
     new_cw = CustomerWorkflow.objects.create(
         customer=cw.customer,
-        workflow=billing_workflow,
-        current_state=initial_billing_state,
+        workflow=support_workflow,
+        current_state=initial_support_state,
         assigned_to=None, 
         metadata=cw.metadata 
     )
 
     CustomerWorkflowHistory.objects.create(
         customer_workflow=new_cw,
-        state=initial_billing_state,
+        state=initial_support_state,
         user=request.user,
-        comment="Derivado automáticamente tras firma de contrato."
+        comment="Derivado automáticamente tras confirmación de abono."
     )
 
     return {
         "success": True, 
-        "message": "Contrato firmado registrado. El cliente ha sido derivado a Facturación."
+        "message": "Abono verificado exitosamente. El cliente ha sido derivado a Soporte."
     }
