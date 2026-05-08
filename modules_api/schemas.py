@@ -31,11 +31,15 @@ class SharedAsideOut(Schema):
 # ==========================================
 # SCHEMAS: TRADE (Ventas - Columna Derecha)
 # ==========================================
-
+class AttachmentOut(Schema):
+    id: int
+    url: str
+    name: str
+    
 class TradeListRowOut(Schema):
     """Esquema diseñado para la tabla/Datatable de TradeList.vue"""
     id: int
-    fecha: datetime
+    fecha: datetime 
     ruc: str
     razonSocial: str
     personal: str
@@ -55,7 +59,8 @@ class TradeTimelineEvent(Schema):
     date: datetime         # Ej: '17/12/2025 - 10:30 AM'
     color: str        # Ej: '#10b981' (verde), '#3b82f6' (azul)
     body: Optional[str] = None
-
+    attachments: Optional[List[AttachmentOut]] = []
+    
 class TradeEmailDraft(Schema):
     """Para la tarjeta de Redactar Mensaje"""
     to: str
@@ -64,6 +69,7 @@ class TradeEmailDraft(Schema):
 
 class TradeMainOut(Schema):
     """El payload maestro para la vista TradeView.vue (main tag)"""
+    customer_id: int
     esperandoRespuesta: bool
     historialPasos: List[TradeStepOut]
     historyEvents: List[TradeTimelineEvent]

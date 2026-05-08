@@ -1,4 +1,5 @@
 # modules_api/routers/trade.py
+import os
 from ninja import Router, Header
 from ninja.errors import HttpError
 from django.db import transaction
@@ -90,7 +91,6 @@ def get_trade_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias
     
     history_logs = list(cw.history_logs.all())
     
-    # CORRECCIÓN 1: Enviar el datetime crudo, sin strftime ni localtime
     history_dates = {
         log.state_id: log.changed_at 
         for log in sorted(history_logs, key=lambda x: x.changed_at)
@@ -101,7 +101,6 @@ def get_trade_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias
         historial_pasos.append({
             "nombre": state.name,
             "estado": "completado" if is_past else "pendiente",
-            # Si hay fecha, enviamos el datetime crudo. Si no, un string vacío (o None).
             "fecha": history_dates.get(state.id, None), 
             "tipo": "envio" 
         })
@@ -111,9 +110,10 @@ def get_trade_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias
     # ---------------------------------------------------------
     history_events = []
     
+    # 2. NUEVO: Agregamos prefetch_related('attachments__file') para traer los archivos sin saturar la BD
     messages = Message.objects.filter(
         conversation__customer_workflow=cw
-    ).select_related('conversation')
+    ).select_related('conversation').prefetch_related('attachments__document')
 
     combined_timeline = sorted(
         chain(history_logs, messages),
@@ -127,7 +127,6 @@ def get_trade_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias
             history_events.append({
                 "status": f"Estado: {item.state.name}",
                 "description": item.comment or "Actualización de flujo.",
-                # CORRECCIÓN 2: Enviar el datetime crudo
                 "date": item.changed_at, 
                 "color": color
             })
@@ -136,13 +135,28 @@ def get_trade_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias
             color = "#f59e0b" if is_inbound else "#3b82f6"
             status_text = "Cliente respondió" if is_inbound else "Correo enviado"
             
+            # 3. NUEVO: Lógica para mapear los adjuntos del mensaje
+            attachments_data = []
+            if hasattr(item, 'attachments'):
+                for att in item.attachments.all():
+                    # Verificamos que el adjunto tenga un documento válido y un archivo físico
+                    if att.document and att.document.file:
+                        # Priorizamos el nombre original limpio, si no, sacamos el de la ruta
+                        filename = att.document.original_filename or os.path.basename(att.document.file.name)
+                        
+                        attachments_data.append({
+                            "id": att.id,
+                            "url": att.document.file.url,
+                            "name": filename
+                        })
+            
             history_events.append({
                 "status": status_text,
                 "description": f"Asunto: {item.subject or 'Sin asunto'}",
                 "body": item.body if hasattr(item, 'body') else None,
-                # CORRECCIÓN 3: Enviar el datetime crudo
                 "date": item.created_at, 
-                "color": color
+                "color": color,
+                "attachments": attachments_data # <-- NUEVO: Pasamos la lista al JSON
             })
 
     # ---------------------------------------------------------
@@ -164,11 +178,11 @@ def get_trade_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias
         assigned_name = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
 
     return {
+        "customer_id": cw.customer.id,
         "esperandoRespuesta": esperando_respuesta,
         "historialPasos": historial_pasos,
         "historyEvents": history_events,
         "emailDraft": email_draft,
-        # Agregamos la metadata de propiedad
         "assigned_to_id": assigned_id,
         "assigned_to_name": assigned_name,
         "current_user_id": request.user.id
@@ -236,3 +250,44 @@ def create_manual_trade(request, payload: ManualTradeCreate, x_brand_id: int = H
 
     return 201, {"message": "Oportunidad creada con éxito", "cw_id": cw.id}
 
+# Archived Trades (Historial) - Similar a Active pero con finished_at__isnull=False
+@router.get("/archived", response=List[TradeListRowOut])
+def list_archived_trades(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    """
+    Devuelve la lista de tratos finalizados (Ganados o Perdidos).
+    Alimentará la vista de historial.
+    """
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    # La diferencia clave: finished_at__isnull=False
+    cws = CustomerWorkflow.objects.filter(
+        workflow__brand=tenant.brand,
+        workflow__code='trade',
+        finished_at__isnull=False 
+    ).select_related(
+        'customer__company', 
+        'customer__contact',
+        'assigned_to', 
+        'current_state'
+    ).order_by('-finished_at') # Ordenamos por fecha de cierre más reciente
+
+    resultados = []
+    
+    for cw in cws:
+        cliente = cw.customer
+        empresa = cliente.company
+        
+        ruc = empresa.tax_id if empresa else "N/A"
+        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
+        personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() if cw.assigned_to else "Sin asignar"
+
+        resultados.append({
+            "id": cw.id,
+            "fecha": cw.finished_at, # Ojo: aquí mostramos cuándo se cerró, no cuándo inició
+            "ruc": ruc,
+            "razonSocial": razon_social,
+            "personal": personal,
+            "estadoId": cw.current_state.code # Mostrará 'won' (Ganado) o 'lost' (Perdido)
+        })
+
+    return resultados

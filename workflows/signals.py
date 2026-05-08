@@ -27,6 +27,7 @@ DEFAULT_WORKFLOWS = [
             {"code": "draft", "name": "Borrador Generado", "sort_order": 1, "is_final": False},
             {"code": "review", "name": "En Revisión Cliente", "sort_order": 2, "is_final": False},
             {"code": "signed", "name": "Contrato Firmado", "sort_order": 3, "is_final": True},
+            {"code": "declined", "name": "Contrato Rechazado", "sort_order": 4, "is_final": True},
         ]
     },
     {

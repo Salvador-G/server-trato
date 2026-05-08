@@ -61,9 +61,6 @@ def list_active_billing(request, x_brand_id: int = Header(..., alias="X-Brand-Id
 
 @router.get("/active/{cw_id}/main", response=TradeMainOut)
 def get_billing_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
-    """
-    Devuelve la información detallada de un flujo de facturación.
-    """
     tenant = get_current_tenant(request, x_brand_id)
     
     cw = get_object_or_404(
@@ -78,7 +75,7 @@ def get_billing_main_data(request, cw_id: int, x_brand_id: int = Header(..., ali
     metadata = cw.metadata or {}
     contact_email = cw.customer.contact.email if cw.customer.contact else ""
     
-    # --- PIPELINE DE PASOS (Stepper) ---
+    # --- PIPELINE DE PASOS ---
     historial_pasos = []
     current_order = cw.current_state.sort_order
     all_states = cw.workflow.states.all().order_by('sort_order')
@@ -97,7 +94,10 @@ def get_billing_main_data(request, cw_id: int, x_brand_id: int = Header(..., ali
 
     # --- HISTORIAL OMNICANAL ---
     history_events = []
-    messages = Message.objects.filter(conversation__customer_workflow=cw).select_related('conversation')
+    # AÑADIDO: prefetch_related
+    messages = Message.objects.filter(
+        conversation__customer_workflow=cw
+    ).select_related('conversation').prefetch_related('attachments__document')
 
     combined_timeline = sorted(
         chain(history_logs, messages),
@@ -107,7 +107,6 @@ def get_billing_main_data(request, cw_id: int, x_brand_id: int = Header(..., ali
 
     for item in combined_timeline:
         if hasattr(item, 'state'):
-            # Evento de cambio de estado
             color = "#10b981" if item.state.is_final else "#d1d5db"
             history_events.append({
                 "status": f"Fase: {item.state.name}",
@@ -116,22 +115,33 @@ def get_billing_main_data(request, cw_id: int, x_brand_id: int = Header(..., ali
                 "color": color
             })
         else:
-            # Evento de mensaje/correo
             is_inbound = item.direction == 'inbound'
-            color = "#f59e0b" if is_inbound else "#8b5cf6" # Usamos morado para cobros enviados, naranja para respuestas
+            color = "#f59e0b" if is_inbound else "#8b5cf6" 
             status_text = "Constancia/Respuesta recibida" if is_inbound else "Factura enviada"
+            
+            # AÑADIDO: Lógica de extracción de adjuntos
+            attachments_data = []
+            if hasattr(item, 'attachments'):
+                for att in item.attachments.all():
+                    if att.document and att.document.file:
+                        filename = att.document.original_filename or os.path.basename(att.document.file.name)
+                        attachments_data.append({
+                            "id": att.id,
+                            "url": att.document.file.url,
+                            "name": filename
+                        })
+
             history_events.append({
                 "status": status_text,
                 "description": f"Asunto: {item.subject or 'Sin asunto'}",
                 "body": item.body if hasattr(item, 'body') else None,
                 "date": item.created_at, 
-                "color": color
+                "color": color,
+                "attachments": attachments_data # <-- PASAMOS LOS ADJUNTOS
             })
 
-    # --- REDACTAR CORREO (Draft Inicial) ---
-    # En Billing, el estado de espera suele llamarse 'waiting_payment' o 'esperando_abono'
+    # --- REDACTAR CORREO ---
     esperando_respuesta = cw.current_state.code in ['waiting_payment', 'esperando_abono'] 
-    
     servicio = metadata.get("servicio_requerido", "los servicios prestados")
     asunto = f"Factura correspondiente a {servicio}"
     
@@ -142,11 +152,10 @@ def get_billing_main_data(request, cw_id: int, x_brand_id: int = Header(..., ali
     }
 
     assigned_id = cw.assigned_to_id
-    assigned_name = None
-    if cw.assigned_to:
-        assigned_name = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
+    assigned_name = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email if cw.assigned_to else None
 
     return {
+        "customer_id": cw.customer.id,
         "esperandoRespuesta": esperando_respuesta,
         "historialPasos": historial_pasos,
         "historyEvents": history_events,
@@ -225,3 +234,45 @@ def mark_as_paid(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Bra
         "success": True, 
         "message": "Abono verificado exitosamente. El cliente ha sido derivado a Soporte."
     }
+    
+
+@router.get("/archived", response=List[BillingListRowOut])
+def list_archived_trades(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    """
+    Devuelve la lista de tratos finalizados (Ganados o Perdidos).
+    Alimentará la vista de historial.
+    """
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    # La diferencia clave: finished_at__isnull=False
+    cws = CustomerWorkflow.objects.filter(
+        workflow__brand=tenant.brand,
+        workflow__code='billing',
+        finished_at__isnull=False 
+    ).select_related(
+        'customer__company', 
+        'customer__contact',
+        'assigned_to', 
+        'current_state'
+    ).order_by('-finished_at') # Ordenamos por fecha de cierre más reciente
+
+    resultados = []
+    
+    for cw in cws:
+        cliente = cw.customer
+        empresa = cliente.company
+        
+        ruc = empresa.tax_id if empresa else "N/A"
+        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
+        personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() if cw.assigned_to else "Sin asignar"
+
+        resultados.append({
+            "id": cw.id,
+            "fecha": cw.finished_at, # Ojo: aquí mostramos cuándo se cerró, no cuándo inició
+            "ruc": ruc,
+            "razonSocial": razon_social,
+            "personal": personal,
+            "estadoId": cw.current_state.code # Mostrará 'won' (Ganado) o 'lost' (Perdido)
+        })
+
+    return resultados

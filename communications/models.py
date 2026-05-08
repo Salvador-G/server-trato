@@ -137,12 +137,15 @@ class MessageAttachment(models.Model):
         verbose_name="Mensaje"
     )
     
-    file = models.FileField(
-        upload_to="attachments/%Y/%m/", 
-        verbose_name="Archivo Adjunto"
+    document = models.ForeignKey(
+        "documents.Document",
+        on_delete=models.CASCADE,
+        related_name="message_links",
+        verbose_name="Documento Físico",
+        null=True,
+        blank=True
     )
     
-    mime_type = models.CharField(max_length=100, blank=True, verbose_name="MIME Type")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -150,4 +153,4 @@ class MessageAttachment(models.Model):
         verbose_name_plural = "Message Attachments"
 
     def __str__(self):
-        return self.file.name.split('/')[-1] if self.file else "Adjunto vacío"
+        return f"Adjunto de: {self.message.subject}"

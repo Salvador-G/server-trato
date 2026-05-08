@@ -33,13 +33,26 @@ class EmailConfigCreate(Schema):
 # =========================
 class MessageAttachmentOut(ModelSchema):
     file_url: Optional[str] = None
+    mime_type: Optional[str] = None
+    name: Optional[str] = None
+
     class Meta:
         model = MessageAttachment
-        fields = ['id', 'mime_type', 'created_at']
+        # Quitamos mime_type de aquí porque ahora vive en Document
+        fields = ['id', 'created_at'] 
 
     @staticmethod
     def resolve_file_url(obj: MessageAttachment) -> Optional[str]:
-        return obj.file.url if obj.file else None
+        # Viajamos a través de la relación para obtener la URL
+        return obj.document.file.url if obj.document and obj.document.file else None
+        
+    @staticmethod
+    def resolve_mime_type(obj: MessageAttachment) -> Optional[str]:
+        return obj.document.mime_type if obj.document else None
+        
+    @staticmethod
+    def resolve_name(obj: MessageAttachment) -> Optional[str]:
+        return obj.document.original_filename if obj.document else "Documento_Adjunto"
 
 class MessageOut(ModelSchema):
     attachments: List[MessageAttachmentOut] = []
@@ -63,3 +76,4 @@ class SendMessagePayload(Schema):
     subject: Optional[str] = None
     to_address: str
     advance_state_to: Optional[str] = None
+    document_ids : Optional[List[int]] = []

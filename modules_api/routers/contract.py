@@ -64,20 +64,19 @@ def list_active_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-
 def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     tenant = get_current_tenant(request, x_brand_id)
     
-    # Validamos que sea un contrato y pertenezca a la marca
     cw = get_object_or_404(
         CustomerWorkflow.objects.select_related(
             'workflow', 'current_state', 'customer__contact'
         ), 
         id=cw_id, 
         workflow__brand=tenant.brand,
-        workflow__code='contract' # <-- IMPORTANTE
+        workflow__code='contract'
     )
 
     metadata = cw.metadata or {}
     contact_email = cw.customer.contact.email if cw.customer.contact else ""
     
-    # --- PIPELINE DE PASOS (Stepper) ---
+    # --- PIPELINE DE PASOS ---
     historial_pasos = []
     current_order = cw.current_state.sort_order
     all_states = cw.workflow.states.all().order_by('sort_order')
@@ -94,9 +93,12 @@ def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., al
             "tipo": "envio" 
         })
 
-    # --- HISTORIAL OMNICANAL (Workflow Logs + Emails) ---
+    # --- HISTORIAL OMNICANAL ---
     history_events = []
-    messages = Message.objects.filter(conversation__customer_workflow=cw).select_related('conversation')
+    # AÑADIDO: prefetch_related para los adjuntos
+    messages = Message.objects.filter(
+        conversation__customer_workflow=cw
+    ).select_related('conversation').prefetch_related('attachments__document')
 
     combined_timeline = sorted(
         chain(history_logs, messages),
@@ -117,16 +119,30 @@ def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., al
             is_inbound = item.direction == 'inbound'
             color = "#f59e0b" if is_inbound else "#3b82f6"
             status_text = "Cliente respondió" if is_inbound else "Correo enviado"
+            
+            # AÑADIDO: Lógica de extracción de adjuntos
+            attachments_data = []
+            if hasattr(item, 'attachments'):
+                for att in item.attachments.all():
+                    if att.document and att.document.file:
+                        filename = att.document.original_filename or os.path.basename(att.document.file.name)
+                        attachments_data.append({
+                            "id": att.id,
+                            "url": att.document.file.url,
+                            "name": filename
+                        })
+
             history_events.append({
                 "status": status_text,
                 "description": f"Asunto: {item.subject or 'Sin asunto'}",
                 "body": item.body if hasattr(item, 'body') else None,
                 "date": item.created_at, 
-                "color": color
+                "color": color,
+                "attachments": attachments_data # <-- PASAMOS LOS ADJUNTOS
             })
 
-    # --- REDACTAR CORREO (Draft Inicial) ---
-    esperando_respuesta = cw.current_state.code == 'review' # Solo espera respuesta si está en revisión de cliente
+    # --- REDACTAR CORREO ---
+    esperando_respuesta = cw.current_state.code == 'review'
     servicio = metadata.get("servicio_requerido", "")
     asunto = f"Contrato de Servicio - {servicio}" if servicio else "Documentación Legal"
     
@@ -137,11 +153,10 @@ def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., al
     }
 
     assigned_id = cw.assigned_to_id
-    assigned_name = None
-    if cw.assigned_to:
-        assigned_name = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
+    assigned_name = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email if cw.assigned_to else None
 
     return {
+        "customer_id": cw.customer.id,
         "esperandoRespuesta": esperando_respuesta,
         "historialPasos": historial_pasos,
         "historyEvents": history_events,
@@ -212,3 +227,45 @@ def mark_as_signed(request, cw_id: int, x_brand_id: int = Header(..., alias="X-B
         "success": True, 
         "message": "Contrato firmado registrado. El cliente ha sido derivado a Facturación."
     }
+    
+
+@router.get("/archived", response=List[ContractListRowOut])
+def list_archived_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    """
+    Devuelve la lista de contratos finalizados.
+    Alimentará la vista de historial.
+    """
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    # La diferencia clave: finished_at__isnull=False
+    cws = CustomerWorkflow.objects.filter(
+        workflow__brand=tenant.brand,
+        workflow__code='contract',
+        finished_at__isnull=False 
+    ).select_related(
+        'customer__company', 
+        'customer__contact',
+        'assigned_to', 
+        'current_state'
+    ).order_by('-finished_at') # Ordenamos por fecha de cierre más reciente
+
+    resultados = []
+    
+    for cw in cws:
+        cliente = cw.customer
+        empresa = cliente.company
+        
+        ruc = empresa.tax_id if empresa else "N/A"
+        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
+        personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() if cw.assigned_to else "Sin asignar"
+
+        resultados.append({
+            "id": cw.id,
+            "fecha": cw.finished_at, # Ojo: aquí mostramos cuándo se cerró, no cuándo inició
+            "ruc": ruc,
+            "razonSocial": razon_social,
+            "personal": personal,
+            "estadoId": cw.current_state.code # Mostrará 'won' (Ganado) o 'lost' (Perdido)
+        })
+
+    return resultados

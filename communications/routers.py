@@ -6,8 +6,8 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
 from ninja_jwt.authentication import JWTAuth
-
-from .models import EmailConfiguration, Conversation, Message
+import os
+from .models import EmailConfiguration, Conversation, Message, MessageAttachment
 from .schemas import (
     EmailConfigOut, EmailConfigCreate, 
     ConversationOut, MessageOut, SendMessagePayload
@@ -16,6 +16,7 @@ from workflows.models import CustomerWorkflow, CustomerWorkflowHistory, Workflow
 from core.dependencies import get_current_tenant
 from core.utils.encryption import encrypt_password
 from core.utils.email_sender import send_dynamic_email  # Función hipotética para enviar emails usando smtplib o similar
+from documents.models import Document  
 router = Router(tags=["Communications"], auth=JWTAuth())
 
 # ==========================================
@@ -125,13 +126,31 @@ def send_message(request, payload: SendMessagePayload, x_brand_id: int = Header(
             status='draft', 
         )
         
+        attachments_for_email = []
+        if payload.document_ids:
+            # Buscamos los documentos físicos verificando que pertenezcan a la marca
+            docs = Document.objects.filter(id__in=payload.document_ids, brand=tenant.brand)
+            
+            for doc in docs:
+                # 1. ¡LA MAGIA! Solo guardamos la relación en la base de datos (0 copias de archivos físicos)
+                MessageAttachment.objects.create(message=msg, document=doc)
+
+                # 2. Preparamos la ruta física para que SMTP pueda empaquetar el correo
+                filename = doc.original_filename or os.path.basename(doc.file.name)
+                attachments_for_email.append({
+                    'filename': filename,
+                    'filepath': doc.file.path,
+                    'mime_type': doc.mime_type
+                })
+                
         if payload.channel == 'email':
             success, error_msg = send_dynamic_email(
                 email_config=email_config,
                 to_address=payload.to_address,
                 subject=payload.subject,
                 body=payload.body,
-                from_header=from_address
+                from_header=from_address,
+                attachments=attachments_for_email
             )
             
             if success:

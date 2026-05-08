@@ -38,8 +38,17 @@ def upload_document(
 ):
     tenant = get_current_tenant(request, x_brand_id)
     
-    customer = get_object_or_404(Customer, id=payload.customer_id, brand=tenant.brand)
-    doc_type = get_object_or_404(DocumentType, id=payload.document_type_id, brand=tenant.brand)
+    # 1. Validación de Cliente con mensaje claro
+    try:
+        customer = Customer.objects.get(id=payload.customer_id, brand=tenant.brand)
+    except Customer.DoesNotExist:
+        raise HttpError(404, f"El Cliente con ID {payload.customer_id} no existe en esta marca.")
+
+    # 2. Validación de Tipo de Documento con mensaje claro
+    try:
+        doc_type = DocumentType.objects.get(id=payload.document_type_id, brand=tenant.brand)
+    except DocumentType.DoesNotExist:
+        raise HttpError(404, f"El Tipo de Documento con ID {payload.document_type_id} no está configurado.")
     
     try:
         with transaction.atomic():
@@ -52,21 +61,13 @@ def upload_document(
                 created_by=request.user
             )
             
-            # 1. Asignamos el archivo en MEMORIA (Todavía no se guarda en disco)
             doc.file = file
-            
-            # 2. Forzamos la validación. ¡Aquí se dispara nuestro escáner (MIME, Hash, Pillow)!
-            # Si detecta malware, lanza un error y el proceso muere aquí sin tocar el disco duro.
             doc.full_clean() 
-            
-            # 3. Si sobrevivió el escáner, guardamos. 
-            # Django ahora sí lo escribe en el disco usando el upload_to de forma segura.
             doc.save()
             
             return 201, doc
             
     except ValidationError as e:
-        # Errores de validación (MIME, Duplicados, etc)
         raise HttpError(400, str(e))
     except Exception as e:
         raise HttpError(500, f"Error al registrar el documento: {str(e)}")
