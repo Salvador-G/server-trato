@@ -120,3 +120,53 @@ class BrandUser(models.Model):
 
     def __str__(self):
         return f"{self.user} @ {self.brand} ({self.role.name})"
+    
+    
+# =========================
+# AUDIT LOG (Auditoría de Sistema e IAM)
+# =========================
+class AuditLog(models.Model):
+    ACTION_CHOICES = [
+        ('AUTH_LOGIN', 'Inicio de sesión exitoso'),
+        ('AUTH_FAILED', 'Intento de sesión fallido'),
+        ('USER_INVITED', 'Usuario invitado a la marca'),
+        ('ROLE_CHANGED', 'Rol de usuario modificado'),
+        ('USER_DEACTIVATED', 'Usuario desactivado'),
+    ]
+
+    # Relación con el Tenant (Puede ser nulo si el error ocurre antes de identificar la marca)
+    brand = models.ForeignKey(
+        Brand, 
+        on_delete=models.CASCADE, 
+        related_name="audit_logs", 
+        null=True, 
+        blank=True
+    )
+    
+    # El actor que realiza la acción (Puede ser nulo si se elimina el usuario)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name="audit_actions"
+    )
+
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES, db_index=True)
+    
+    # JSON para flexibilidad: { "target_user_email": "...", "old_role": "...", "new_role": "..." }
+    details = models.JSONField(default=dict, blank=True) 
+
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Audit Log"
+        verbose_name_plural = "Audit Logs"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        actor_name = self.actor.email if self.actor else "Sistema"
+        return f"[{self.created_at.strftime('%Y-%m-%d %H:%M')}] {actor_name} -> {self.action}"

@@ -69,6 +69,8 @@ class UserProfile(models.Model):
     
     # CAMBIO AQUÍ: Cambiamos 'upload_module' por 'upload_to'
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
-
+    last_ip = models.GenericIPAddressField(null=True, blank=True, verbose_name="Última IP")
+    last_user_agent = models.CharField(max_length=255, null=True, blank=True, verbose_name="Último Dispositivo/Navegador")
+    
     def __str__(self):
         return f"Perfil de {self.user.email}"

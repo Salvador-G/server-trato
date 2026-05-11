@@ -9,6 +9,7 @@ from .models import (
     Role,
     Permission,
     BrandUser,
+    AuditLog
 )
 
 User = get_user_model()
@@ -150,3 +151,25 @@ class BrandUserAdmin(admin.ModelAdmin):
     list_filter = ("brand", "role", "is_active")
     search_fields = ("user__email", "brand__name")
     autocomplete_fields = ("user", "assigned_by")
+    
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = ('created_at', 'actor', 'action', 'brand', 'ip_address')
+    list_filter = ('action', 'brand', 'created_at')
+    search_fields = ('actor__email', 'ip_address', 'user_agent')
+    readonly_fields = ('brand', 'actor', 'action', 'details', 'ip_address', 'user_agent', 'created_at')
+    
+    # Ordenamiento por defecto en el admin
+    ordering = ('-created_at',)
+
+    # ==========================================
+    # BLOQUEO DE MUTACIONES (Solo Lectura)
+    # ==========================================
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

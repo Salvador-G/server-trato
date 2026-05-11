@@ -1,6 +1,7 @@
 from ninja import NinjaAPI
 from ninja_extra import exceptions
-from ninja_jwt.routers.obtain import obtain_pair_router, refresh_token # <-- El import correcto para el Login
+from ninja_jwt.routers.obtain import refresh_token 
+from accounts.routers import auth_router, router as accounts_router
 from accounts.routers import router as accounts_router
 from core.routers import router as core_router
 from customers.routers import router as customers_router
@@ -19,7 +20,7 @@ api = NinjaAPI(
 
 # Agregamos el router de Autenticación (Login)
 # Esto creará los endpoints: POST /api/auth/pair (para hacer login)
-api.add_router("/auth", obtain_pair_router, tags=["Auth"])
+api.add_router("/auth", auth_router)
 
 api.post("/auth/refresh", tags=["Auth"])(refresh_token)
 

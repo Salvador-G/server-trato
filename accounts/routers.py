@@ -1,15 +1,86 @@
-from ninja import Router
+# accounts/routers.py
+from ninja import Router, Schema
 from django.db import transaction
+from django.contrib.auth.models import update_last_login
 from ninja.errors import HttpError
 from typing import List
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model, authenticate
 from django.shortcuts import get_object_or_404
 from ninja_jwt.authentication import JWTAuth
+from ninja_jwt.tokens import RefreshToken
+from core.utils.audit import log_audit_event
+from core.utils.network import get_client_ip, rate_limit
 
-from core.models import BrandUser, Role
+from core.models import Brand, BrandUser, Role
 from .schemas import AdminUserUpdate, UserOut, UserCreate, UserUpdate, EmployeeCreateInput
+from .models import UserProfile
 
 User = get_user_model()
+
+# ==========================================
+# 1. ESQUEMA DE LOGIN LIMPIO
+# ==========================================
+class LoginInput(Schema):
+    email: str
+    password: str
+    brand_id: int = None  # <-- Opcional, pero útil si quieres validar que el usuario pertenece a la marca desde el login
+    
+# ==========================================
+# ROUTER DE AUTENTICACIÓN (PÚBLICO)
+# ==========================================
+auth_router = Router(tags=["Auth"])
+
+@auth_router.post("/pair")
+@rate_limit(max_requests=5, window_seconds=60) # Protección contra fuerza bruta: 5 intentos por minuto por IP
+def custom_login(request, payload: LoginInput):
+    """
+    Endpoint de Login.
+    Protegido contra fuerza bruta: Máximo 5 intentos por minuto por IP.
+    """
+    user = authenticate(request, email=payload.email, password=payload.password)
+    
+    if not user:
+        # Auditoría simple
+        log_audit_event(
+            request=request,
+            action='AUTH_FAILED',
+            details={"email_attempt": payload.email}
+        )
+        raise HttpError(401, "Usuario o contraseña incorrectos")
+
+    if not user.is_active:
+        raise HttpError(403, "Esta cuenta está inactiva.")
+
+    # Actualizar IP y Dispositivo
+    ip = get_client_ip(request)
+    user_agent = request.META.get('HTTP_USER_AGENT', '')[:255]
+    
+    if hasattr(user, 'profile'):
+        user.profile.last_ip = ip
+        user.profile.last_user_agent = user_agent
+        user.profile.save(update_fields=['last_ip', 'last_user_agent'])
+
+    update_last_login(None, user)
+    
+    # Auditoría de Login Global (Sin vincular a Tenant)
+    log_audit_event(
+        request=request,
+        action='AUTH_LOGIN',
+        actor=user,
+        details={"login_method": "credentials"}
+    )
+
+    refresh = RefreshToken.for_user(user)
+    
+    return {
+        "access": str(refresh.access_token),
+        "refresh": str(refresh),
+    }
+
+
+# ==========================================
+# ROUTER DE CUENTAS (PROTEGIDO)
+# ==========================================
 router = Router(tags=["Accounts"], auth=JWTAuth())
 
 @router.post("/users", response={201: UserOut})
@@ -24,7 +95,7 @@ def create_user(request, payload: UserCreate):
     
     return 201, user
 
-# Endpoint para iniciar sesion 
+# Endpoint para iniciar sesion (Obtener datos propios)
 @router.get("/users/me", response=UserOut)
 def get_me(request):
     """Devuelve los datos del usuario autenticado actualmente"""

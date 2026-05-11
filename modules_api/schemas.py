@@ -129,3 +129,22 @@ class SupportListRowOut(Schema):
     razonSocial: str
     personal: str
     estadoId: str
+    
+# ==========================================
+# SCHEMAS: ADMINISTRATOR (Usuarios y Roles)
+# ==========================================
+class UserSessionInfoOut(Schema):
+    ip_address: Optional[str] = None
+    browser_os: Optional[str] = None
+
+class AdminUserListOut(Schema):
+    """Esquema para la tabla de directorio de usuarios en el módulo Administrador"""
+    brand_user_id: int
+    user_id: int
+    full_name: str
+    email: str
+    role_name: str
+    is_active: bool
+    joined_at: datetime
+    last_login: Optional[datetime] = None
+    session_info: UserSessionInfoOut
