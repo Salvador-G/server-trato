@@ -24,6 +24,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar el resto del código del proyecto
 COPY . .
 
+# Ejecuta las migraciones y colecta los archivos estáticos
+RUN python manage.py collectstatic --noinput
+
+# ---> EL DETECTIVE: Obligamos a Django a revisar todo. Si hay un error, lo imprimirá aquí <---
+RUN python manage.py check
+
+
 # Exponer el puerto en el que correrá Gunicorn
 EXPOSE 8000
 
