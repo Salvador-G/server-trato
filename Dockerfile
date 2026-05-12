@@ -3,16 +3,16 @@ FROM python:3.12-slim
 
 # Variables de entorno para optimizar Python en contenedores
 # Evita que Python escriba archivos .pyc
-ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONDONTWRITEBYTECODE=1
 # Evita que Python almacene en buffer el stdout/stderr (útil para ver logs en tiempo real en Dokploy)
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONUNBUFFERED=1
 
 # Establecer el directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias del sistema necesarias para compilar paquetes (como psycopg2 para PostgreSQL)
+# Instalar dependencias del sistema necesarias para compilar paquetes
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libpq-dev \
+    && apt-get install -y --no-install-recommends gcc libpq-dev python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar solo el archivo de requerimientos primero (aprovecha la caché de Docker)
