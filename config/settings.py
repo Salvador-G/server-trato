@@ -32,6 +32,13 @@ DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 allowed_hosts_env = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,[::1],192.168.1.233')
 ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_env.split(',')]
 
+# 1. Le enseñamos a Django a reconocer cuando el tráfico viene seguro (HTTPS) a través del proxy
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# 2. Le decimos a Django qué orígenes (dominios) están autorizados para enviar formularios (como el login)
+csrf_trusted_env = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:8000')
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_env.split(',')]
+
 # Limite de carga máxima de archivos (15MB)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024  # 15 MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024  # 15 MB
