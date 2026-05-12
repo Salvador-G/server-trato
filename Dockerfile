@@ -10,9 +10,9 @@ ENV PYTHONUNBUFFERED=1
 # Establecer el directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias del sistema necesarias para compilar paquetes
+# Instalar dependencias del sistema
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libpq-dev python3-dev \
+    && apt-get install -y --no-install-recommends gcc libpq-dev python3-dev libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar solo el archivo de requerimientos primero (aprovecha la caché de Docker)
