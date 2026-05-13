@@ -55,10 +55,14 @@ def custom_login(request, payload: LoginInput):
     ip = get_client_ip(request)
     user_agent = request.META.get('HTTP_USER_AGENT', '')[:255]
     
-    if hasattr(user, 'profile'):
-        user.profile.last_ip = ip
-        user.profile.last_user_agent = user_agent
-        user.profile.save(update_fields=['last_ip', 'last_user_agent'])
+    # 2. Reemplazamos el 'if hasattr' por 'get_or_create'
+    # Esto garantiza que el perfil exista sí o sí.
+    profile, created = UserProfile.objects.get_or_create(user=user)
+    
+    # 3. Asignamos los valores y guardamos
+    profile.last_ip = ip
+    profile.last_user_agent = user_agent
+    profile.save(update_fields=['last_ip', 'last_user_agent'])
 
     update_last_login(None, user)
     
