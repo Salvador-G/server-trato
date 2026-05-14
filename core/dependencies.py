@@ -27,3 +27,20 @@ def get_current_tenant(request, brand_id: int) -> BrandUser:
 
     except BrandUser.DoesNotExist:
         raise HttpError(403, "No tienes acceso a este espacio de trabajo.")
+    
+def verify_module_access(tenant: BrandUser, required_role_code: str):
+    """
+    Bloquea el acceso si el usuario no tiene el rol necesario.
+    'owner' y 'manager' siempre pasan.
+    """
+    role_name = tenant.role.name.lower()
+    
+    # Lista de roles con super-poderes dentro de la marca
+    super_roles = ['owner', 'manager']
+    
+    # Si el rol actual no es super-poderoso y no es el rol específico requerido
+    if role_name not in super_roles and role_name != required_role_code.lower():
+        raise HttpError(
+            403, 
+            f"Permisos insuficientes. Se requiere rol de {required_role_code}, Manager u Owner."
+        )

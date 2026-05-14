@@ -27,59 +27,56 @@ class LegalEntityAdmin(admin.ModelAdmin):
 # 2. FORMULARIO DE ONBOARDING SAAS (Brands)
 # ==========================================
 class BrandOnboardingForm(forms.ModelForm):
-    # La selección de la empresa matriz ahora es un campo del modelo (ForeignKey).
-    # Usaremos el campo por defecto de ModelForm, así que no necesitamos redefinirlo aquí.
-
-    # --- Campos del Dueño (Owner) ---
-    owner_email = forms.EmailField(required=True, label="Email del Dueño")
-    owner_password = forms.CharField(widget=forms.PasswordInput, required=True, label="Contraseña Temporal")
-    owner_first_name = forms.CharField(max_length=150, required=True, label="Nombre del Dueño")
-    owner_last_name = forms.CharField(max_length=150, required=True, label="Apellidos del Dueño")
+    # En lugar de pedir textos sueltos, pedimos que seleccione al usuario que ya creó
+    owner_user = forms.ModelChoiceField(
+        queryset=User.objects.filter(is_active=True),
+        required=False,
+        label="Seleccionar Dueño (Owner)",
+        help_text="Selecciona el usuario que será el administrador principal de esta marca. Debes crearlo previamente en la sección 'Accounts'."
+    )
 
     class Meta:
         model = Brand
-        fields = ('name', 'legal_entity', 'is_active') # Incluimos legal_entity
+        fields = ('name', 'legal_entity', 'is_active')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Si la instancia ya existe (estamos EDITANDO una marca, no creándola)
+        # Si la instancia ya existe (estamos EDITANDO la marca)
         if self.instance and self.instance.pk:
-            # Al editar, no necesitamos volver a pedir los datos del dueño
-            self.fields['owner_email'].required = False
-            self.fields['owner_password'].required = False
-            self.fields['owner_first_name'].required = False
-            self.fields['owner_last_name'].required = False
+            # Ocultamos el campo porque el Owner solo se asigna al nacer la marca
+            # Para cambiar o añadir dueños después, se usa la tabla BrandUser
+            self.fields['owner_user'].widget = forms.HiddenInput()
+            self.fields['owner_user'].required = False
+        else:
+            self.fields['owner_user'].required = True
             
 @admin.register(Brand)
 class BrandAdmin(admin.ModelAdmin):
     form = BrandOnboardingForm
     list_display = ('name', 'get_tax_id', 'get_legal_name', 'is_active', 'created_at')
     search_fields = ('name', 'legal_entity__tax_id', 'legal_entity__legal_name')
-    autocomplete_fields = ('legal_entity',) # <-- ¡SUPER ÚTIL! Permite buscar el RUC si hay muchos
+    autocomplete_fields = ('legal_entity',) 
 
     def get_tax_id(self, obj):
-        """Muestra el RUC en la lista principal del admin"""
         if obj.legal_entity:
             return obj.legal_entity.tax_id
         return "Sin RUC"
     get_tax_id.short_description = "RUC / ID Fiscal"
 
     def get_legal_name(self, obj):
-        """Muestra la razón social"""
         if obj.legal_entity:
             return obj.legal_entity.legal_name
         return "N/A"
     get_legal_name.short_description = "Razón Social"
 
-    # Aquí definimos cómo se organiza visualmente el formulario en el panel
     fieldsets = (
         ('Datos Comerciales (Tenant)', {
             'fields': ('name', 'legal_entity', 'is_active'),
-            'description': "La 'Legal Entity' es la empresa matriz (RUC). Puedes buscar una existente o crearla dándole al botón '+'.",
+            'description': "La 'Legal Entity' es la empresa matriz (RUC).",
         }),
-        ('Credenciales del Dueño (Solo Creación)', {
-            'fields': ('owner_first_name', 'owner_last_name', 'owner_email', 'owner_password'),
-            'description': "Estos datos solo se usarán al registrar una nueva marca para crear al usuario administrador principal."
+        ('Asignación de Administrador (Solo Creación)', {
+            'fields': ('owner_user',),
+            'description': "Asigna a un usuario existente para que sea el Dueño (Owner) del Tenant. Si no existe, ve a la sección de Usuarios y créalo primero."
         }),
     )
 
@@ -87,41 +84,30 @@ class BrandAdmin(admin.ModelAdmin):
         """
         Sobrescribimos el guardado para orquestar la transacción atómica
         """
-        # Verificamos si estamos CREANDO una marca nueva
         if not obj.pk:
             with transaction.atomic():
-                # 1. Guardar la Marca Base (ahora incluye automáticamente el legal_entity seleccionado en el panel)
+                # 1. Guardar la Marca Base
                 super().save_model(request, obj, form, change)
 
-                # 2. Crear el Rol 'Owner' aislado para esta marca específica
+                # 2. Crear el Rol 'Owner' aislado para esta marca
                 owner_role, created = Role.objects.get_or_create(
                     brand=obj,
                     name="Owner",
                     defaults={"description": "Administrador principal y dueño de la cuenta SaaS."}
                 )
 
-                # 3. Crear el Usuario (o recuperarlo si ya existía en otra marca)
-                email = form.cleaned_data['owner_email']
-                user = User.objects.filter(email=email).first()
-                if not user:
-                    user = User.objects.create_user(
-                        email=email,
-                        password=form.cleaned_data['owner_password'],
-                        first_name=form.cleaned_data['owner_first_name'],
-                        last_name=form.cleaned_data['owner_last_name']
+                # 3. Vincular el usuario seleccionado con la marca recién creada
+                selected_user = form.cleaned_data.get('owner_user')
+                
+                if selected_user:
+                    BrandUser.objects.create(
+                        user=selected_user,
+                        brand=obj,
+                        role=owner_role,
+                        assigned_by=request.user # Tú, el superadmin
                     )
-
-                # 4. Crear el BrandUser (Pivot: Trabajador ↔ Marca ↔ Rol)
-                BrandUser.objects.create(
-                    user=user,
-                    brand=obj,
-                    role=owner_role,
-                    assigned_by=request.user # Registramos que el Superadmin hizo la asignación
-                )
-        
-        # Si estamos EDITANDO una marca existente
         else:
-            # Ya no necesitamos lógica compleja aquí, super() guarda el cambio de nombre o de legal_entity
+            # Si solo estamos editando el nombre de la marca o su estado
             super().save_model(request, obj, form, change)
 
 # ==========================================
