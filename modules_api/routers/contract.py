@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from itertools import chain
 from communications.models import Message
 from workflows.models import Workflow, WorkflowState, CustomerWorkflow, CustomerWorkflowHistory 
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, verify_module_access
 from ..schemas import ContractListRowOut, TradeMainOut
 
 router = Router(tags=["Modules API - Contract (Operaciones/Legal)"], auth=JWTAuth())
@@ -21,8 +21,11 @@ def list_active_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-
     """
     tenant = get_current_tenant(request, x_brand_id)
     
+    verify_module_access(tenant, 'contract')
+    
     # Filtramos: Marca actual, flujo de 'contract', y que no estén finalizados
-    cws = CustomerWorkflow.objects.filter(
+    # Ninja aplicará LIMIT/OFFSET y los resolvers del Schema harán el formateo
+    return CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
         workflow__code='contract', 
         finished_at__isnull=True
@@ -33,36 +36,11 @@ def list_active_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-
         'current_state'
     ).order_by('-started_at')
 
-    resultados = []
-    
-    for cw in cws:
-        cliente = cw.customer
-        empresa = cliente.company
-        
-        # Lógica de fallback para B2B vs B2C
-        ruc = empresa.tax_id if empresa else "N/A"
-        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
-        
-        # Personal asignado (Heredado de Ventas al momento de derivar)
-        if cw.assigned_to:
-            personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
-        else:
-            personal = "Sin asignar"
-
-        resultados.append({
-            "id": cw.id,
-            "fecha": cw.started_at, # Pasamos el objeto datetime crudo, el frontend lo formatea
-            "ruc": ruc,
-            "razonSocial": razon_social,
-            "personal": personal,
-            "estadoId": cw.current_state.code 
-        })
-
-    return resultados
-
 @router.get("/active/{cw_id}/main", response=TradeMainOut)
 def get_contract_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     tenant = get_current_tenant(request, x_brand_id)
+    
+    verify_module_access(tenant, 'contract')
     
     cw = get_object_or_404(
         CustomerWorkflow.objects.select_related(
@@ -174,6 +152,8 @@ def mark_as_signed(request, cw_id: int, x_brand_id: int = Header(..., alias="X-B
     """
     tenant = get_current_tenant(request, x_brand_id)
     
+    verify_module_access(tenant, 'contract')
+    
     cw = get_object_or_404(
         CustomerWorkflow, 
         id=cw_id, 
@@ -236,36 +216,16 @@ def list_archived_contracts(request, x_brand_id: int = Header(..., alias="X-Bran
     Alimentará la vista de historial.
     """
     tenant = get_current_tenant(request, x_brand_id)
+    verify_module_access(tenant, 'contract')
     
     # La diferencia clave: finished_at__isnull=False
-    cws = CustomerWorkflow.objects.filter(
+    return CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
-        workflow__code='contract',
-        finished_at__isnull=False 
+        workflow__code='contract', 
+        finished_at__isnull=False # <-- CRÍTICO: False porque ya terminaron
     ).select_related(
         'customer__company', 
         'customer__contact',
         'assigned_to', 
         'current_state'
-    ).order_by('-finished_at') # Ordenamos por fecha de cierre más reciente
-
-    resultados = []
-    
-    for cw in cws:
-        cliente = cw.customer
-        empresa = cliente.company
-        
-        ruc = empresa.tax_id if empresa else "N/A"
-        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
-        personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() if cw.assigned_to else "Sin asignar"
-
-        resultados.append({
-            "id": cw.id,
-            "fecha": cw.finished_at, # Ojo: aquí mostramos cuándo se cerró, no cuándo inició
-            "ruc": ruc,
-            "razonSocial": razon_social,
-            "personal": personal,
-            "estadoId": cw.current_state.code # Mostrará 'won' (Ganado) o 'lost' (Perdido)
-        })
-
-    return resultados
+    ).order_by('-started_at')

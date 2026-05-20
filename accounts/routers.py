@@ -1,6 +1,8 @@
 # accounts/routers.py
-from ninja import Router, Schema
+from ninja import Router, Schema, File, Header
+from ninja.files import UploadedFile
 from django.db import transaction
+from django.db.models import Q
 from django.contrib.auth.models import update_last_login
 from ninja.errors import HttpError
 from typing import List
@@ -8,11 +10,13 @@ from django.contrib.auth import get_user_model, authenticate
 from django.shortcuts import get_object_or_404
 from ninja_jwt.authentication import JWTAuth
 from ninja_jwt.tokens import RefreshToken
+from core.dependencies import get_current_tenant
 from core.utils.audit import log_audit_event
 from core.utils.network import get_client_ip, rate_limit
 
 from core.models import Brand, BrandUser, Role
-from .schemas import AdminUserUpdate, UserOut, UserCreate, UserUpdate, EmployeeCreateInput
+from .schemas import (AdminUserUpdate, UserOut, UserCreate, UserUpdate,
+                      EmployeeCreateInput, UserMeUpdate, ChangePasswordInput)
 from .models import UserProfile
 
 User = get_user_model()
@@ -106,6 +110,91 @@ def get_me(request):
     # Gracias a auth=JWTAuth() en el router, request.user ya es el usuario real
     return request.user
 
+@router.patch("/users/me/update", response=UserOut)
+def update_me(request, payload: UserMeUpdate):
+    """Actualiza la información básica y el perfil del usuario autenticado"""
+    user = request.user
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+
+    # 1. Actualizamos datos del User (Nombres)
+    if payload.first_name is not None:
+        user.first_name = payload.first_name
+    if payload.last_name is not None:
+        user.last_name = payload.last_name
+    user.save(update_fields=['first_name', 'last_name'])
+
+    # 2. Actualizamos datos del Perfil (Contacto y Legales)
+    if payload.phone is not None:
+        profile.phone = payload.phone
+    if payload.document_type is not None:
+        profile.document_type = payload.document_type
+    if payload.document_id is not None:
+        profile.document_id = payload.document_id
+    if payload.address is not None:
+        profile.address = payload.address
+    profile.save()
+
+    log_audit_event(
+        request=request,
+        action='PROFILE_UPDATED',
+        actor=user,
+        details={
+            "message": "El usuario actualizó sus datos personales de contacto.",
+            # Opcional: podrías guardar los campos que cambiaron
+        }
+    )
+    
+    return user
+
+@router.post("/users/me/change-password")
+def change_password(request, payload: ChangePasswordInput):
+    """Cambia la contraseña validando la contraseña anterior"""
+    user = request.user
+    
+    # 1. Validar que la contraseña actual ingresada sea correcta
+    if not user.check_password(payload.current_password):
+        raise HttpError(400, "La contraseña actual es incorrecta.")
+    
+    # 2. Asignar la nueva contraseña de forma encriptada
+    user.set_password(payload.new_password)
+    user.save(update_fields=['password'])
+    
+    ip = get_client_ip(request)
+    user_agent = request.META.get('HTTP_USER_AGENT', '')[:255]
+    
+    # Opcional: Registrar en auditoría
+    log_audit_event(
+        request=request,
+        action='ROLE_CHANGED', # O crea un 'PASSWORD_CHANGED' en tu log
+        actor=user,
+        details={
+            "message": "Cambio de contraseña exitoso",
+            "ip_address": ip, # Dejamos constancia de la IP exacta
+            "user_agent": user_agent # Dejamos constancia si usó Chrome, Safari, móvil, etc.
+        }
+    )
+    
+    return {"success": True, "message": "Contraseña actualizada exitosamente."}
+
+@router.post("/users/me/avatar")
+def upload_avatar(request, file: UploadedFile = File(...)):
+    """Sube y actualiza la foto de perfil del usuario"""
+    user = request.user
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    
+    # Validaciones básicas de seguridad para imágenes
+    if not file.content_type.startswith("image/"):
+        raise HttpError(400, "El archivo debe ser una imagen válida.")
+    
+    if file.size > 5 * 1024 * 1024: # Límite de 5MB
+        raise HttpError(400, "La imagen no debe pesar más de 5MB.")
+
+    # Guardar el archivo en el ImageField
+    profile.avatar.save(file.name, file)
+    
+    # Retornamos la URL relativa para que el frontend la muestre
+    return {"success": True, "avatar_url": profile.avatar.url}
+
 @router.get("/users", response=List[UserOut])
 def list_users(request):
     """Lista de usuarios globales (SOLO PARA SUPERADMINS)"""
@@ -162,57 +251,65 @@ def delete_user(request, user_id: int):
 
 # Endpoint para que un Admin de marca cree un empleado vinculado a su empresa
 @router.post("/brand/employees", response={201: UserOut})
-def create_brand_employee(request, payload: EmployeeCreateInput):
+def create_brand_employee(
+    request, 
+    payload: EmployeeCreateInput, 
+    x_brand_id: int = Header(..., alias="X-Brand-Id")
+):
     """
-    Crea un empleado y lo vincula a la marca del administrador que hace la petición.
+    Invita a un usuario a la marca. Si el usuario no existe en el sistema, lo crea.
     """
-    # 1. Obtener el contexto de la marca del Admin actual.
-    # Asumimos que tienes una forma de saber en qué marca está operando el admin.
-    # Por ejemplo, obteniendo su registro de BrandUser:
-    admin_brand_link = BrandUser.objects.filter(user=request.user, is_active=True).first()
-    if not admin_brand_link:
-        raise HttpError(403, "El usuario actual no pertenece a ninguna marca activa.")
-    
-    active_brand = admin_brand_link.brand
+    tenant = get_current_tenant(request, x_brand_id)
+    active_brand = tenant.brand
 
-    # 2. Validar que el Role especificado pertenece a ESTA marca
-    # Esto evita que un admin asigne un rol global o de otra empresa.
     try:
-        role = Role.objects.get(id=payload.role_id, brand=active_brand)
+        role = Role.objects.get(id=payload.role_id) 
     except Role.DoesNotExist:
-        raise HttpError(400, "El rol especificado no existe en tu empresa.")
+        raise HttpError(400, "El rol especificado no existe en el sistema.")
 
-    # 3. Transacción Atómica: O se crea todo, o no se crea nada
     try:
         with transaction.atomic():
-            # A) Crear el Usuario Global
-            new_user = User.objects.create_user(
-                email=payload.email,
-                password=payload.password,
-                first_name=payload.first_name,
-                last_name=payload.last_name
-            )
+            
+            # 1. ¿El usuario ya existe en nuestro SaaS?
+            user = User.objects.filter(email=payload.email).first()
+            
+            if not user:
+                # ESCENARIO A: El usuario es totalmente nuevo
+                user = User.objects.create_user(
+                    email=payload.email,
+                    password=payload.password, # Solo usamos el password temporal si es nuevo
+                    first_name=payload.first_name,
+                    last_name=payload.last_name,
+                )
 
-            # B) Crear o Actualizar el UserProfile (si usaste signals, esto lo actualiza)
-            # Usamos get_or_create por si la señal post_save ya lo creó vacío
-            profile, created = UserProfile.objects.get_or_create(user=new_user)
-            if payload.document_id:
-                profile.document_id = payload.document_id
-            if payload.phone:
-                profile.phone = payload.phone
-            if payload.address:
-                profile.address = payload.address
-            profile.save()
+                # Creamos su perfil de una vez
+                profile, _ = UserProfile.objects.get_or_create(user=user)
+                if payload.document_id: profile.document_id = payload.document_id
+                if payload.phone: profile.phone = payload.phone
+                if payload.address: profile.address = payload.address
+                profile.save()
+                
+            else:
+                # ESCENARIO B: El usuario ya existe (tiene cuenta en Trato)
+                # Verificamos que no esté ya vinculado a esta misma empresa
+                if BrandUser.objects.filter(user=user, brand=active_brand).exists():
+                    # Si quieres ser fancy, aquí podrías actualizarle el rol en lugar de lanzar error, 
+                    # pero lanzar error es más seguro para evitar cambios accidentales.
+                    raise HttpError(400, "Este usuario ya pertenece a tu empresa.")
+                
+                # Opcional: Podrías actualizar su nombre/apellido si quieres, 
+                # pero generalmente se respeta la data que el usuario ya tenía.
 
-            # C) Vincular el Usuario a la Marca con su Rol (BrandUser)
+            # 2. Vincular el Usuario a la Marca (Sea nuevo o existente)
             BrandUser.objects.create(
-                user=new_user,
+                user=user,
                 brand=active_brand,
                 role=role
             )
             
-            return 201, new_user
+            return 201, user
 
+    except HttpError:
+        raise # Dejamos pasar los errores 400 que nosotros mismos lanzamos
     except Exception as e:
-        # Aquí puedes loggear el error real para ti
-        raise HttpError(400, f"Error al crear el empleado: {str(e)}")
+        raise HttpError(400, f"Error al vincular el empleado: {str(e)}")

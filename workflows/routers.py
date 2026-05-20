@@ -15,7 +15,7 @@ from .schemas import (
     CustomerWorkflowOut, CustomerWorkflowCreate, 
     WorkflowTransition, WorkflowHistoryOut
 )
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, verify_module_access
 
 router = Router(tags=["Workflows (Procesos)"], auth=JWTAuth())
 
@@ -255,6 +255,8 @@ def reassign_workflow(request, cw_id: int, x_brand_id: int = Header(..., alias="
     """
     tenant = get_current_tenant(request, x_brand_id)
     
+    
+    
     with transaction.atomic():
         try:
             cw = CustomerWorkflow.objects.select_for_update().get(
@@ -264,6 +266,8 @@ def reassign_workflow(request, cw_id: int, x_brand_id: int = Header(..., alias="
         except CustomerWorkflow.DoesNotExist:
             raise HttpError(404, "Proceso no encontrado")
             
+        verify_module_access(tenant, cw.workflow.code)
+        
         if cw.finished_at:
             raise HttpError(400, "No puedes reasignar un proceso que ya está finalizado.")
             

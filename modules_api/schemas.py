@@ -29,6 +29,43 @@ class SharedAsideOut(Schema):
     requirement_details: AsideRequirementDetails
     
 # ==========================================
+# 1. ESQUEMA BASE (El motor de traducción)
+# ==========================================
+class BaseListRowOut(Schema):
+    """Esquema padre que tiene la lógica para extraer datos del CustomerWorkflow"""
+    id: int
+    fecha: datetime
+    ruc: str
+    razonSocial: str
+    personal: str
+    estadoId: str
+
+    @staticmethod
+    def resolve_fecha(obj):
+        return obj.started_at
+
+    @staticmethod
+    def resolve_ruc(obj):
+        empresa = obj.customer.company if obj.customer else None
+        return empresa.tax_id if empresa else "N/A"
+
+    @staticmethod
+    def resolve_razonSocial(obj):
+        cliente = obj.customer
+        empresa = cliente.company if cliente else None
+        return empresa.legal_name if empresa else (cliente.contact.full_name if cliente and cliente.contact else "Sin Nombre")
+
+    @staticmethod
+    def resolve_personal(obj):
+        if obj.assigned_to:
+            return f"{obj.assigned_to.first_name} {obj.assigned_to.last_name}".strip() or obj.assigned_to.email
+        return "Sin asignar"
+
+    @staticmethod
+    def resolve_estadoId(obj):
+        return obj.current_state.code if obj.current_state else None
+    
+# ==========================================
 # SCHEMAS: TRADE (Ventas - Columna Derecha)
 # ==========================================
 class AttachmentOut(Schema):
@@ -36,14 +73,9 @@ class AttachmentOut(Schema):
     url: str
     name: str
     
-class TradeListRowOut(Schema):
+class TradeListRowOut(BaseListRowOut):
     """Esquema diseñado para la tabla/Datatable de TradeList.vue"""
-    id: int
-    fecha: datetime 
-    ruc: str
-    razonSocial: str
-    personal: str
-    estadoId: str
+    pass
     
 class TradeStepOut(Schema):
     """Para el Stepper Horizontal (Pipeline)"""
@@ -95,40 +127,25 @@ class ManualTradeCreate(Schema):
 # SCHEMAS: CONTRACT (Contratos - Columna Derecha)
 # ================================================
 
-class ContractListRowOut(Schema):
+class ContractListRowOut(BaseListRowOut):
     """Esquema para cada fila de la tabla en ContractList"""
-    id: int
-    fecha: datetime
-    ruc: str
-    razonSocial: str
-    personal: str
-    estadoId: str
+    pass
     
 # ================================================
 # SCHEMAS: BILLING (Facturación - Columna Derecha)
 # ================================================
 
-class BillingListRowOut(Schema):
+class BillingListRowOut(BaseListRowOut):
     """Esquema para cada fila de la tabla en BillingList"""
-    id: int
-    fecha: datetime
-    ruc: str
-    razonSocial: str
-    personal: str
-    estadoId: str
+    pass
     
 # ================================================
 # SCHEMAS: SUPPORT (Soporte / Onboarding - Columna Derecha)
 # ================================================
 
-class SupportListRowOut(Schema):
+class SupportListRowOut(BaseListRowOut):
     """Esquema para cada fila de la tabla en SupportList"""
-    id: int
-    fecha: datetime
-    ruc: str
-    razonSocial: str
-    personal: str
-    estadoId: str
+    pass
     
 # ==========================================
 # SCHEMAS: ADMINISTRATOR (Usuarios y Roles)

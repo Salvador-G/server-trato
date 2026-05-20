@@ -1,6 +1,7 @@
 # modules_api/routers/trade.py
 import os
 from ninja import Router, Header
+from ninja.pagination import paginate, LimitOffsetPagination
 from ninja.errors import HttpError
 from django.db import transaction
 from django.shortcuts import get_object_or_404
@@ -13,21 +14,23 @@ from typing import List
 from workflows.models import CustomerWorkflow, CustomerWorkflowHistory, Workflow
 from customers.models import Company, Contact, Customer
 from communications.models import Message
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, verify_module_access
 from ..schemas import TradeMainOut, TradeListRowOut, ManualTradeCreate
 
 router = Router(tags=["Modules API - Trade (Ventas)"], auth=JWTAuth())
 
 @router.get("/active", response=List[TradeListRowOut])
+@paginate(LimitOffsetPagination)
 def list_active_trades(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """
-    Devuelve la lista de oportunidades de venta activas.
-    Reemplaza al antiguo llamado a form_engine/submissions.
+    Devuelve la lista de oportunidades de venta activas paginadas.
     """
     tenant = get_current_tenant(request, x_brand_id)
     
-    # Filtramos: Solo la marca actual, solo el workflow de 'trade', y que no estén finalizados
-    cws = CustomerWorkflow.objects.filter(
+    verify_module_access(tenant, 'trade')
+    
+    # Ninja aplicará LIMIT/OFFSET y los resolvers del Schema harán el formateo
+    return CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
         workflow__code='trade', 
         finished_at__isnull=True
@@ -37,34 +40,6 @@ def list_active_trades(request, x_brand_id: int = Header(..., alias="X-Brand-Id"
         'assigned_to', 
         'current_state'
     ).order_by('-started_at')
-
-    resultados = []
-    
-    for cw in cws:
-        cliente = cw.customer
-        empresa = cliente.company
-        
-        # Lógica de fallback por si es B2C
-        ruc = empresa.tax_id if empresa else "N/A"
-        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
-        
-        # Personal asignado
-        if cw.assigned_to:
-            personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
-        else:
-            personal = "Sin asignar"
-
-        # CORRECCIÓN: Eliminamos el strftime y pasamos el objeto datetime crudo
-        resultados.append({
-            "id": cw.id,
-            "fecha": cw.started_at, # <--- ¡Solo esto!
-            "ruc": ruc,
-            "razonSocial": razon_social,
-            "personal": personal,
-            "estadoId": cw.current_state.code 
-        })
-
-    return resultados
 
 @router.get("/active/{cw_id}/main", response=TradeMainOut)
 def get_trade_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
@@ -252,42 +227,20 @@ def create_manual_trade(request, payload: ManualTradeCreate, x_brand_id: int = H
 
 # Archived Trades (Historial) - Similar a Active pero con finished_at__isnull=False
 @router.get("/archived", response=List[TradeListRowOut])
+@paginate(LimitOffsetPagination) # <-- CRÍTICO: Añadir paginador
 def list_archived_trades(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """
-    Devuelve la lista de tratos finalizados (Ganados o Perdidos).
-    Alimentará la vista de historial.
+    Devuelve la lista de oportunidades de venta archivadas / finalizadas.
     """
     tenant = get_current_tenant(request, x_brand_id)
     
-    # La diferencia clave: finished_at__isnull=False
-    cws = CustomerWorkflow.objects.filter(
+    return CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
-        workflow__code='trade',
-        finished_at__isnull=False 
+        workflow__code='trade', 
+        finished_at__isnull=False # <-- CRÍTICO: False porque ya terminaron
     ).select_related(
         'customer__company', 
         'customer__contact',
         'assigned_to', 
         'current_state'
-    ).order_by('-finished_at') # Ordenamos por fecha de cierre más reciente
-
-    resultados = []
-    
-    for cw in cws:
-        cliente = cw.customer
-        empresa = cliente.company
-        
-        ruc = empresa.tax_id if empresa else "N/A"
-        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
-        personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() if cw.assigned_to else "Sin asignar"
-
-        resultados.append({
-            "id": cw.id,
-            "fecha": cw.finished_at, # Ojo: aquí mostramos cuándo se cerró, no cuándo inició
-            "ruc": ruc,
-            "razonSocial": razon_social,
-            "personal": personal,
-            "estadoId": cw.current_state.code # Mostrará 'won' (Ganado) o 'lost' (Perdido)
-        })
-
-    return resultados
+    ).order_by('-started_at')

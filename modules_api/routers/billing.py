@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from itertools import chain
 from communications.models import Message
 from workflows.models import CustomerWorkflow, WorkflowState, Workflow, CustomerWorkflowHistory
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, verify_module_access
 from ..schemas import BillingListRowOut, TradeMainOut
 
 router = Router(tags=["Modules API - Billing (Facturación/Cobranza)"], auth=JWTAuth())
@@ -21,10 +21,12 @@ def list_active_billing(request, x_brand_id: int = Header(..., alias="X-Brand-Id
     """
     tenant = get_current_tenant(request, x_brand_id)
     
+    verify_module_access(tenant, 'billing')
+    
     # Filtramos: Marca actual, flujo de 'billing', y que no estén finalizados
-    cws = CustomerWorkflow.objects.filter(
+    return CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
-        workflow__code='billing', # <-- Código del flujo de facturación
+        workflow__code='billing', 
         finished_at__isnull=True
     ).select_related(
         'customer__company', 
@@ -33,36 +35,12 @@ def list_active_billing(request, x_brand_id: int = Header(..., alias="X-Brand-Id
         'current_state'
     ).order_by('-started_at')
 
-    resultados = []
-    
-    for cw in cws:
-        cliente = cw.customer
-        empresa = cliente.company
-        
-        ruc = empresa.tax_id if empresa else "N/A"
-        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
-        
-        # Personal asignado (El encargado de facturación)
-        if cw.assigned_to:
-            personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() or cw.assigned_to.email
-        else:
-            personal = "Sin asignar"
-
-        resultados.append({
-            "id": cw.id,
-            "fecha": cw.started_at,
-            "ruc": ruc,
-            "razonSocial": razon_social,
-            "personal": personal,
-            "estadoId": cw.current_state.code 
-        })
-
-    return resultados
-
 @router.get("/active/{cw_id}/main", response=TradeMainOut)
 def get_billing_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     tenant = get_current_tenant(request, x_brand_id)
     
+    verify_module_access(tenant, 'billing')
+
     cw = get_object_or_404(
         CustomerWorkflow.objects.select_related(
             'workflow', 'current_state', 'customer__contact'
@@ -174,6 +152,8 @@ def mark_as_paid(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Bra
     """
     tenant = get_current_tenant(request, x_brand_id)
     
+    verify_module_access(tenant, 'billing')
+    
     # 1. Obtenemos el flujo de facturación actual
     cw = get_object_or_404(
         CustomerWorkflow, 
@@ -244,35 +224,16 @@ def list_archived_trades(request, x_brand_id: int = Header(..., alias="X-Brand-I
     """
     tenant = get_current_tenant(request, x_brand_id)
     
+    verify_module_access(tenant, 'billing')
+    
     # La diferencia clave: finished_at__isnull=False
-    cws = CustomerWorkflow.objects.filter(
+    return CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
-        workflow__code='billing',
-        finished_at__isnull=False 
+        workflow__code='billing', 
+        finished_at__isnull=False # <-- CRÍTICO: False porque ya terminaron
     ).select_related(
         'customer__company', 
         'customer__contact',
         'assigned_to', 
         'current_state'
-    ).order_by('-finished_at') # Ordenamos por fecha de cierre más reciente
-
-    resultados = []
-    
-    for cw in cws:
-        cliente = cw.customer
-        empresa = cliente.company
-        
-        ruc = empresa.tax_id if empresa else "N/A"
-        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
-        personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() if cw.assigned_to else "Sin asignar"
-
-        resultados.append({
-            "id": cw.id,
-            "fecha": cw.finished_at, # Ojo: aquí mostramos cuándo se cerró, no cuándo inició
-            "ruc": ruc,
-            "razonSocial": razon_social,
-            "personal": personal,
-            "estadoId": cw.current_state.code # Mostrará 'won' (Ganado) o 'lost' (Perdido)
-        })
-
-    return resultados
+    ).order_by('-started_at')

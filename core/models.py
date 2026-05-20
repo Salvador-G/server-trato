@@ -132,6 +132,8 @@ class AuditLog(models.Model):
         ('USER_INVITED', 'Usuario invitado a la marca'),
         ('ROLE_CHANGED', 'Rol de usuario modificado'),
         ('USER_DEACTIVATED', 'Usuario desactivado'),
+        ('PASSWORD_CHANGED', 'Contraseña actualizada'),
+        ('PROFILE_UPDATED', 'Perfil de usuario actualizado'),
     ]
 
     # Relación con el Tenant (Puede ser nulo si el error ocurre antes de identificar la marca)

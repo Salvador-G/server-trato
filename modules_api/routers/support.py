@@ -13,7 +13,7 @@ from ninja.errors import HttpError
 
 from communications.models import Message
 from workflows.models import WorkflowState, CustomerWorkflow, CustomerWorkflowHistory
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, verify_module_access
 from ..schemas import SupportListRowOut, TradeMainOut
 
 router = Router(tags=["Modules API - Support (Operaciones/Onboarding)"], auth=JWTAuth())
@@ -26,9 +26,11 @@ def list_active_support(request, x_brand_id: int = Header(..., alias="X-Brand-Id
     """
     tenant = get_current_tenant(request, x_brand_id)
     
-    cws = CustomerWorkflow.objects.filter(
+    verify_module_access(tenant, 'support')
+    
+    return CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
-        workflow__code='support', # <-- Código del flujo de soporte
+        workflow__code='support', 
         finished_at__isnull=True
     ).select_related(
         'customer__company', 
@@ -37,29 +39,11 @@ def list_active_support(request, x_brand_id: int = Header(..., alias="X-Brand-Id
         'current_state'
     ).order_by('-started_at')
 
-    resultados = []
-    for cw in cws:
-        cliente = cw.customer
-        empresa = cliente.company
-        
-        ruc = empresa.tax_id if empresa else "N/A"
-        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
-        personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() if cw.assigned_to else "Sin asignar"
-
-        resultados.append({
-            "id": cw.id,
-            "fecha": cw.started_at,
-            "ruc": ruc,
-            "razonSocial": razon_social,
-            "personal": personal,
-            "estadoId": cw.current_state.code 
-        })
-
-    return resultados
-
 @router.get("/active/{cw_id}/main", response=TradeMainOut)
 def get_support_main_data(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     tenant = get_current_tenant(request, x_brand_id)
+    
+    verify_module_access(tenant, 'support')
     
     cw = get_object_or_404(
         CustomerWorkflow.objects.select_related('workflow', 'current_state', 'customer__contact'), 
@@ -159,6 +143,9 @@ def get_support_main_data(request, cw_id: int, x_brand_id: int = Header(..., ali
 @router.post("/active/{cw_id}/generate-access")
 def generate_credentials(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     tenant = get_current_tenant(request, x_brand_id)
+    
+    verify_module_access(tenant, 'support')
+    
     cw = get_object_or_404(CustomerWorkflow, id=cw_id, workflow__brand=tenant.brand, workflow__code='support', finished_at__isnull=True)
 
     if cw.assigned_to_id and cw.assigned_to_id != request.user.id:
@@ -227,6 +214,9 @@ def activate_service(request, cw_id: int, x_brand_id: int = Header(..., alias="X
     Solo se utiliza si REQUIRE_MANUAL_ACTIVATION = True.
     """
     tenant = get_current_tenant(request, x_brand_id)
+    
+    verify_module_access(tenant, 'support')
+    
     cw = get_object_or_404(CustomerWorkflow, id=cw_id, workflow__brand=tenant.brand, workflow__code='support', finished_at__isnull=True)
 
     if cw.assigned_to_id and cw.assigned_to_id != request.user.id:
@@ -256,35 +246,16 @@ def list_archived_trades(request, x_brand_id: int = Header(..., alias="X-Brand-I
     """
     tenant = get_current_tenant(request, x_brand_id)
     
+    verify_module_access(tenant, 'support')
+    
     # La diferencia clave: finished_at__isnull=False
-    cws = CustomerWorkflow.objects.filter(
+    return CustomerWorkflow.objects.filter(
         workflow__brand=tenant.brand,
-        workflow__code='support',
-        finished_at__isnull=False 
+        workflow__code='support', 
+        finished_at__isnull=False # <-- CRÍTICO: False porque ya terminaron
     ).select_related(
         'customer__company', 
         'customer__contact',
         'assigned_to', 
         'current_state'
-    ).order_by('-finished_at') # Ordenamos por fecha de cierre más reciente
-
-    resultados = []
-    
-    for cw in cws:
-        cliente = cw.customer
-        empresa = cliente.company
-        
-        ruc = empresa.tax_id if empresa else "N/A"
-        razon_social = empresa.legal_name if empresa else (cliente.contact.full_name if cliente.contact else "Sin Nombre")
-        personal = f"{cw.assigned_to.first_name} {cw.assigned_to.last_name}".strip() if cw.assigned_to else "Sin asignar"
-
-        resultados.append({
-            "id": cw.id,
-            "fecha": cw.finished_at, # Ojo: aquí mostramos cuándo se cerró, no cuándo inició
-            "ruc": ruc,
-            "razonSocial": razon_social,
-            "personal": personal,
-            "estadoId": cw.current_state.code # Mostrará 'won' (Ganado) o 'lost' (Perdido)
-        })
-
-    return resultados
+    ).order_by('-started_at')

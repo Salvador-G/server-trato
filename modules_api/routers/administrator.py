@@ -5,7 +5,7 @@ from typing import List
 from ninja_jwt.authentication import JWTAuth
 
 from core.models import BrandUser
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, verify_module_access
 from ..schemas import AdminUserListOut
 
 router = Router(tags=["Administrator"], auth=JWTAuth())

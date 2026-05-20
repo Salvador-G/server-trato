@@ -62,8 +62,15 @@ class User(AbstractBaseUser, PermissionsMixin):
 # USER PROFILE
 # =========================
 class UserProfile(models.Model):
+    DOC_TYPES = [
+        ('DNI', 'DNI'),
+        ('CE', 'Carnet de Extranjería'),
+        ('PASSPORT', 'Pasaporte'),
+        ('RUC', 'RUC (Persona Natural)')
+    ]
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
-    document_id = models.CharField(max_length=20, blank=True, verbose_name="DNI / CE")
+    document_type = models.CharField(max_length=20, choices=DOC_TYPES, blank=True, null=True, verbose_name="Tipo de Doc.")
+    document_id = models.CharField(max_length=20, blank=True, verbose_name="Numero de Documento")
     phone = models.CharField(max_length=20, blank=True)
     address = models.TextField(blank=True)
     
