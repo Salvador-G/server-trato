@@ -1,5 +1,7 @@
 # modules_api/routers/billing.py
+import os
 from ninja import Router, Header
+from ninja.pagination import paginate, LimitOffsetPagination
 from ninja.errors import HttpError
 from ninja_jwt.authentication import JWTAuth
 from typing import List
@@ -14,6 +16,7 @@ from ..schemas import BillingListRowOut, TradeMainOut
 router = Router(tags=["Modules API - Billing (Facturación/Cobranza)"], auth=JWTAuth())
 
 @router.get("/active", response=List[BillingListRowOut])
+@paginate(LimitOffsetPagination)
 def list_active_billing(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """
     Devuelve la lista de flujos de facturación en curso.

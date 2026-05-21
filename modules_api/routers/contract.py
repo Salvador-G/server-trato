@@ -1,5 +1,7 @@
 # modules_api/routers/contract.py
+import os
 from ninja import Router, Header
+from ninja.pagination import paginate, LimitOffsetPagination
 from ninja_jwt.authentication import JWTAuth
 from typing import List
 from django.utils import timezone
@@ -14,6 +16,7 @@ from ..schemas import ContractListRowOut, TradeMainOut
 router = Router(tags=["Modules API - Contract (Operaciones/Legal)"], auth=JWTAuth())
 
 @router.get("/active", response=List[ContractListRowOut])
+@paginate(LimitOffsetPagination)
 def list_active_contracts(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """
     Devuelve la lista de contratos en curso (no finalizados).

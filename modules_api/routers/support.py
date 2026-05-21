@@ -1,5 +1,7 @@
 # modules_api/routers/support.py
+import os
 from ninja import Router, Header
+from ninja.pagination import paginate, LimitOffsetPagination
 from ninja_jwt.authentication import JWTAuth
 from typing import List
 from itertools import chain
@@ -20,6 +22,7 @@ router = Router(tags=["Modules API - Support (Operaciones/Onboarding)"], auth=JW
 User = get_user_model()
 
 @router.get("/active", response=List[SupportListRowOut])
+@paginate(LimitOffsetPagination)
 def list_active_support(request, x_brand_id: int = Header(..., alias="X-Brand-Id")):
     """
     Devuelve la lista de clientes en proceso de Onboarding.
