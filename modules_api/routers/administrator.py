@@ -1,5 +1,7 @@
 # modules_api/administrator.py
+import os
 from ninja import Router
+from ninja.pagination import paginate, LimitOffsetPagination
 from ninja.errors import HttpError
 from typing import List
 from ninja_jwt.authentication import JWTAuth
@@ -11,6 +13,7 @@ from ..schemas import AdminUserListOut
 router = Router(tags=["Administrator"], auth=JWTAuth())
 
 @router.get("/{brand_id}/users", response=List[AdminUserListOut])
+@paginate(LimitOffsetPagination)
 def list_tenant_users(request, brand_id: int):
     # 1. Autenticación y Extracción del Perfil Tenant (Gatekeeper)
     # Verifica que el usuario pertenezca a la marca consultada
