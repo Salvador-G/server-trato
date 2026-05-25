@@ -1,14 +1,15 @@
 # modules_api/administrator.py
 import os
-from ninja import Router
+from ninja import Router, Header
 from ninja.pagination import paginate, LimitOffsetPagination
 from ninja.errors import HttpError
 from typing import List
 from ninja_jwt.authentication import JWTAuth
+from django.shortcuts import get_object_or_404
 
-from core.models import BrandUser
+from core.models import BrandUser, AuditLog
 from core.dependencies import get_current_tenant, verify_module_access
-from ..schemas import AdminUserListOut
+from ..schemas import AdminUserListOut, UserDetailExtendedOut, AuditLogOut
 
 router = Router(tags=["Administrator"], auth=JWTAuth())
 
@@ -65,3 +66,68 @@ def list_tenant_users(request, brand_id: int):
         })
 
     return result
+
+# ---------------------------------------------------------
+# 1. DATOS PRINCIPALES DEL USUARIO (Para la cabecera/tarjeta)
+# ---------------------------------------------------------
+@router.get("/brand/employees/{user_id}", response=UserDetailExtendedOut)
+def get_employee_details(request, user_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    # Validamos que el usuario realmente pertenezca a esta marca
+    brand_user = get_object_or_404(BrandUser, user_id=user_id, brand=tenant.brand)
+    user_obj = brand_user.user
+    profile = getattr(user_obj, 'profile', None)
+
+    return {
+        "id": user_obj.id,
+        "email": user_obj.email,
+        "first_name": user_obj.first_name,
+        "last_name": user_obj.last_name,
+        "is_active": brand_user.is_active,
+        "joined_at": brand_user.joined_at,
+        "role_name": brand_user.role.name,
+        "document_type": profile.document_type if profile else None,
+        "document_id": profile.document_id if profile else None,
+        "phone": profile.phone if profile else None,
+        "address": profile.address if profile else None,
+    }
+
+# ---------------------------------------------------------
+# 2. TIMELINE DE ACTIVIDAD (Excluye logins)
+# ---------------------------------------------------------
+@router.get("/brand/employees/{user_id}/activity", response=List[AuditLogOut])
+@paginate(LimitOffsetPagination)
+def get_employee_activity(request, user_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    # Validar que pertenece a la marca
+    get_object_or_404(BrandUser, user_id=user_id, brand=tenant.brand)
+    
+    # Retornamos todas sus acciones en ESTA marca, excluyendo los inicios de sesión
+    return AuditLog.objects.filter(
+        brand=tenant.brand,
+        actor_id=user_id
+    ).exclude(
+        action__in=['AUTH_LOGIN', 'AUTH_FAILED']
+    ).order_by('-created_at')
+
+# ---------------------------------------------------------
+# 3. HISTORIAL DE SEGURIDAD Y SESIONES (Solo logins)
+# ---------------------------------------------------------
+@router.get("/brand/employees/{user_id}/sessions", response=List[AuditLogOut])
+@paginate(LimitOffsetPagination)
+def get_employee_sessions(request, user_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    tenant = get_current_tenant(request, x_brand_id)
+    
+    # Validar que pertenece a la marca
+    get_object_or_404(BrandUser, user_id=user_id, brand=tenant.brand)
+    
+    # Retornamos SOLO los eventos de autenticación
+    # Nota: Si el login es global (antes de elegir marca), el 'brand' del AuditLog podría ser null. 
+    # En ese caso podrías quitar el filtro de `brand=tenant.brand` solo para este endpoint, 
+    # dependiendo de cómo guardes el AUTH_LOGIN.
+    return AuditLog.objects.filter(
+        actor_id=user_id,
+        action__in=['AUTH_LOGIN', 'AUTH_FAILED']
+    ).order_by('-created_at')

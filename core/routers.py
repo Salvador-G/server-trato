@@ -1,7 +1,7 @@
 # core/routers.py
 from ninja import Router, Header
 from ninja.errors import HttpError
-from django.db.models import ProtectedError
+from django.db.models import ProtectedError, F
 from typing import List
 from django.shortcuts import get_object_or_404
 from django.db import transaction
@@ -67,10 +67,23 @@ def create_legal_entity(request, payload: LegalEntityCreate):
 
 @router.get("/my-brands", response=List[BrandOut])
 def list_my_brands(request):
-    """Lista las marcas a las que pertenece el usuario autenticado."""
-    brand_users = BrandUser.objects.filter(user=request.user, is_active=True).select_related('brand__legal_entity')
-    return [bu.brand for bu in brand_users]
-
+    """Lista las marcas a las que pertenece el usuario autenticado, incluyendo su rol."""
+    # Obtenemos las relaciones activas del usuario
+    brand_users = BrandUser.objects.filter(
+        user=request.user, 
+        is_active=True
+    ).select_related('brand__legal_entity', 'role')
+    
+    # Extraemos las marcas, pero les inyectamos el nombre del rol dinámicamente
+    # para que el schema BrandOut pueda leer 'role_name'
+    marcas = []
+    for bu in brand_users:
+        brand = bu.brand
+        # Inyectamos el atributo on-the-fly (al vuelo)
+        brand.role_name = bu.role.name 
+        marcas.append(brand)
+        
+    return marcas
 @router.post("/my-brands", response={201: BrandOut})
 def create_my_brand(request, payload: BrandCreate):
     """Crea una nueva marca. Si se envía legal_entity_id, la asocia a esa matriz."""

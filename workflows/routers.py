@@ -15,6 +15,7 @@ from .schemas import (
     CustomerWorkflowOut, CustomerWorkflowCreate, 
     WorkflowTransition, WorkflowHistoryOut
 )
+from core.utils.audit import log_audit_event
 from core.dependencies import get_current_tenant, verify_module_access
 
 router = Router(tags=["Workflows (Procesos)"], auth=JWTAuth())
@@ -123,6 +124,7 @@ def transition_workflow(request, cw_id: int, payload: WorkflowTransition, x_bran
     new_state = get_object_or_404(WorkflowState, code=payload.new_state_code, workflow=cw.workflow)
     
     with transaction.atomic():
+        old_state_name= cw.current_state.name
         cw.current_state = new_state
         
         # <-- NUEVO: Lógica de actualización de Metadata (Merge parcial) -->
@@ -143,6 +145,22 @@ def transition_workflow(request, cw_id: int, payload: WorkflowTransition, x_bran
             state=new_state,
             user=request.user,
             comment=payload.comment or f"Movido a {new_state.name}"
+        )
+        
+        # Auditoría general
+        cliente_nombre = cw.customer.company.legal_name if cw.customer.company else "Cliente B2C"
+        log_audit_event(
+            request=request,
+            action=f"{cw.workflow.code.upper()}_STATE_CHANGED", # Ej: TRADE_STATE_CHANGED
+            actor=request.user,
+            brand=tenant.brand,
+            details={
+                "cw_id": cw.id,
+                "customer_name": cliente_nombre,
+                "old_state": old_state_name,
+                "new_state": new_state.name,
+                "comment": payload.comment
+            }
         )
         
     return cw
@@ -210,6 +228,20 @@ def derive_to_contract(request, cw_id: int, x_brand_id: int = Header(..., alias=
             comment="Proceso iniciado desde derivación de Trade."
         )
 
+        # Auditoría general del traspaso
+        cliente_nombre = trade_cw.customer.company.legal_name if trade_cw.customer.company else "Cliente B2C"
+        log_audit_event(
+            request=request,
+            action='CONTRACT_GENERATED',
+            actor=request.user,
+            brand=tenant.brand,
+            details={
+                "trade_cw_id": trade_cw.id,
+                "contract_cw_id": nuevo_contract.id,
+                "customer_name": cliente_nombre
+            }
+        )
+        
     # Devolvemos el nuevo contrato para que el Front pueda redirigir
     return 200, nuevo_contract
 
@@ -243,6 +275,21 @@ def decline_trade(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Br
             state=estado_perdido,
             user=request.user,
             comment="El negocio fue marcado como perdido por el usuario."
+        )
+        
+        # Auditoría general del marcado como perdido
+        cliente_nombre = trade_cw.customer.company.legal_name if trade_cw.customer.company else "Cliente B2C"
+        log_audit_event(
+            request=request,
+            action='TRADE_STATE_CHANGED',
+            actor=request.user,
+            brand=tenant.brand,
+            details={
+                "cw_id": trade_cw.id,
+                "customer_name": cliente_nombre,
+                "new_state": "Perdido",
+                "reason": "Declinado manualmente por el asesor"
+            }
         )
 
     return 200, {"success": True, "message": "Proceso marcado como perdido."}
@@ -289,6 +336,21 @@ def reassign_workflow(request, cw_id: int, x_brand_id: int = Header(..., alias="
             state=cw.current_state,
             user=request.user,
             comment=f"Lead reasignado manualmente. Dueño anterior: {dueño_anterior}."
+        )
+        
+        # Auditoría general del cambio de asignación
+        cliente_nombre = cw.customer.company.legal_name if cw.customer.company else "Cliente B2C"
+        log_audit_event(
+            request=request,
+            action=f"{cw.workflow.code.upper()}_TAKEN", # Ej: TRADE_TAKEN
+            actor=request.user,
+            brand=tenant.brand,
+            details={
+                "cw_id": cw.id,
+                "workflow_type": cw.workflow.code,
+                "customer_name": cliente_nombre,
+                "previous_owner": dueño_anterior
+            }
         )
         
     return 200, {"success": True, "message": "Te has asignado este cliente exitosamente."}

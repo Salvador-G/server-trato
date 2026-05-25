@@ -33,6 +33,7 @@ class LegalEntityUpdate(ModelSchema):
 class BrandOut(ModelSchema):
     # Ya no es 'legal_profile', ahora es la entidad legal matriz
     legal_entity: Optional[LegalEntityOut] = None 
+    role_name: Optional[str] = None  # <-- Nuevo campo para mostrar el rol del usuario en esta marca
     
     class Meta:
         model = Brand

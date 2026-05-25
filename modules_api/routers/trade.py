@@ -15,6 +15,7 @@ from workflows.models import CustomerWorkflow, CustomerWorkflowHistory, Workflow
 from customers.models import Company, Contact, Customer
 from communications.models import Message
 from core.dependencies import get_current_tenant, verify_module_access
+from core.utils.audit import log_audit_event
 from ..schemas import TradeMainOut, TradeListRowOut, ManualTradeCreate
 
 router = Router(tags=["Modules API - Trade (Ventas)"], auth=JWTAuth())
@@ -221,6 +222,19 @@ def create_manual_trade(request, payload: ManualTradeCreate, x_brand_id: int = H
             state=initial_state,
             user=request.user,
             comment="Ingresado manualmente por el equipo."
+        )
+        
+        log_audit_event(
+            request=request,
+            action='TRADE_CREATED',
+            actor=request.user,
+            brand=brand,
+            details={
+                "cw_id": cw.id,
+                "company_name": company.legal_name,
+                "tax_id": company.tax_id,
+                "method": "manual"
+            }
         )
 
     return 201, {"message": "Oportunidad creada con éxito", "cw_id": cw.id}

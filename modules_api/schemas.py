@@ -1,9 +1,32 @@
 # modules_api/schemas.py
 from datetime import datetime
 
-from ninja import Schema
+from ninja import Schema, ModelSchema
 from typing import Optional, List, Dict, Any
+from core.models import AuditLog
 
+# Schema de salida para los logs de auditoría, con campos relevantes para el frontend
+class AuditLogOut(ModelSchema):
+    class Meta:
+        model = AuditLog
+        fields = ['id', 'action', 'details', 'ip_address', 'user_agent', 'created_at']
+        
+class UserDetailExtendedOut(Schema):
+    id: int
+    email: str
+    first_name: str
+    last_name: str
+    is_active: bool
+    joined_at: datetime
+    role_name: str
+    
+    # Datos del perfil (pueden ser nulos si no los llenó)
+    document_type: Optional[str] = None
+    document_id: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+        
+# Schema general para los modulos operativos (Trade, Contract, Billing, Support)
 class AsideContactInfo(Schema):
     phone: str
     email: str

@@ -11,6 +11,7 @@ from communications.routers import router as communications_router
 from documents.routers import router as docs_router
 
 from modules_api.api import modules_router
+from analytics_api.api import analytics_router
 
 # Instanciamos la API global
 api = NinjaAPI(
@@ -47,6 +48,9 @@ api.add_router("/form-engine", form_router)
 
 # Router de módulos específicos para el frontend (BFF)
 api.add_router("/modules", modules_router)
+
+# Router de analytics (futuro módulo de análisis y reportes)
+api.add_router("/analytics", analytics_router)  
 
 # Manejador de excepciones obligatorio para ninja_jwt
 @api.exception_handler(exceptions.APIException)
