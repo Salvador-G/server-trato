@@ -2,11 +2,13 @@
 from ninja import Router, Header
 from ninja.errors import HttpError
 from typing import List
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.db.models import Max
 from django.utils.text import slugify
 from ninja_jwt.authentication import JWTAuth
-from workflows.models import Workflow
+from workflows.models import Workflow, WorkflowState, CustomerWorkflow
+from customers.models import Customer, Contact, Company
 
 from .models import Form, FormSubmission
 from .schemas import (
@@ -110,9 +112,8 @@ def get_public_form(request, brand_id: int, form_key: str):
 @router.post("/public/{brand_id}/{form_key}/submit", response={201: dict}, auth=None)
 def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmissionCreate):
     """
-    Endpoint público para recibir las respuestas del cliente final.
+    Endpoint público para recibir respuestas e inyectarlas al CRM automáticamente.
     """
-    # Verificamos que el formulario exista y esté abierto
     form = Form.objects.filter(
         brand_id=brand_id, 
         form_key=form_key, 
@@ -123,11 +124,99 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
     if not form:
         raise HttpError(404, "Formulario no encontrado.")
         
-    # Guardamos la respuesta
-    submission = FormSubmission.objects.create(
-        form=form,
-        payload=payload.payload,
-        source=payload.source
-    )
-    
+    with transaction.atomic():
+        # 1. Guardamos la respuesta en la bandeja de formularios
+        submission = FormSubmission.objects.create(
+            form=form,
+            payload=payload.payload,
+            source=payload.source
+        )
+        
+        # ==========================================
+        # 2. EL PUENTE: CONVERSIÓN A LEAD COMERCIAL
+        # ==========================================
+        data = payload.payload
+        
+        # Extraemos los datos dinámicos
+        email = data.get("email") or data.get("Correo Principal") or f"prospecto_{submission.id}@sin-correo.com"
+        nombre = data.get("Nombre Completo") or "Prospecto Web"
+        telefono = data.get("telefono") or data.get("Teléfono Móvil") or ""
+        
+        ruc = data.get("ruc") or data.get("RUC / ID Fiscal") or ""
+        razon_social = data.get("razonSocial") or data.get("Razón Social") or ""
+
+        customer = None
+
+        # --- LÓGICA B2B vs B2C ---
+        if ruc or razon_social:
+            # FLUJO B2B (Empresa)
+            # 1. Creamos la Empresa
+            company, _ = Company.objects.get_or_create(
+                brand_id=brand_id,
+                tax_id=ruc or f"PENDIENTE-{submission.id}",
+                defaults={
+                    "legal_name": razon_social or nombre,
+                    "metadata": {"origen": "Widget Web"}
+                }
+            )
+            # 2. Creamos al Contacto y lo asociamos a la Empresa
+            contact, _ = Contact.objects.get_or_create(
+                brand_id=brand_id,
+                email=email,
+                defaults={
+                    "full_name": nombre,
+                    "phone": telefono,
+                    "company": company,
+                    "is_primary_contact": True
+                }
+            )
+            # 3. Creamos el Nexo (Customer B2B)
+            customer, _ = Customer.objects.get_or_create(
+                brand_id=brand_id,
+                company=company,
+                defaults={
+                    "customer_type": "B2B",
+                    "contact": contact
+                }
+            )
+        else:
+            # FLUJO B2C (Individuo)
+            # 1. Creamos solo al Contacto humano
+            contact, _ = Contact.objects.get_or_create(
+                brand_id=brand_id,
+                email=email,
+                defaults={
+                    "full_name": nombre,
+                    "phone": telefono
+                }
+            )
+            # 2. Creamos el Nexo (Customer B2C)
+            customer, _ = Customer.objects.get_or_create(
+                brand_id=brand_id,
+                contact=contact,
+                customer_type="B2C"
+            )
+
+        # --- LÓGICA DE WORKFLOW (El Embudo) ---
+        workflow = None
+        if form.target_workflow_id:
+            workflow = Workflow.objects.filter(id=form.target_workflow_id, brand_id=brand_id).first()
+        
+        if not workflow:
+            workflow = Workflow.objects.filter(brand_id=brand_id, code='trade').first()
+
+        if workflow and customer:
+            initial_state = WorkflowState.objects.filter(workflow=workflow).order_by('sort_order').first()
+            
+            if initial_state:
+                # Insertamos el lead en la primera etapa del tablero
+                CustomerWorkflow.objects.get_or_create(
+                    customer=customer,
+                    workflow=workflow,
+                    defaults={
+                        "current_state": initial_state,
+                        "metadata": data  # Toda la info extra va al tablero
+                    }
+                )
+
     return 201, {"submission_id": str(submission.submission_id)}
