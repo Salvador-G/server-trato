@@ -11,6 +11,7 @@ from itertools import chain
 from communications.models import Message
 from workflows.models import CustomerWorkflow, WorkflowState, Workflow, CustomerWorkflowHistory
 from core.dependencies import get_current_tenant, verify_module_access
+from core.utils.audit import log_audit_event
 from ..schemas import BillingListRowOut, TradeMainOut
 
 router = Router(tags=["Modules API - Billing (Facturación/Cobranza)"], auth=JWTAuth())
@@ -211,6 +212,20 @@ def mark_as_paid(request, cw_id: int, x_brand_id: int = Header(..., alias="X-Bra
         state=initial_support_state,
         user=request.user,
         comment="Derivado automáticamente tras confirmación de abono."
+    )
+    
+    cliente_nombre = cw.customer.company.legal_name if cw.customer.company else "Cliente B2C"
+    log_audit_event(
+        request=request,
+        action='BILLING_PAID',
+        actor=request.user,
+        brand=tenant.brand,
+        details={
+            "cw_id": cw.id,
+            "customer_name": cliente_nombre,
+            "next_step": "support_created",
+            "new_cw_id": new_cw.id
+        }
     )
 
     return {

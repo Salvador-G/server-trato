@@ -11,6 +11,7 @@ from itertools import chain
 from communications.models import Message
 from workflows.models import Workflow, WorkflowState, CustomerWorkflow, CustomerWorkflowHistory 
 from core.dependencies import get_current_tenant, verify_module_access
+from core.utils.audit import log_audit_event
 from ..schemas import ContractListRowOut, TradeMainOut
 
 router = Router(tags=["Modules API - Contract (Operaciones/Legal)"], auth=JWTAuth())
@@ -204,6 +205,20 @@ def mark_as_signed(request, cw_id: int, x_brand_id: int = Header(..., alias="X-B
         state=initial_billing_state,
         user=request.user,
         comment="Derivado automáticamente tras firma de contrato."
+    )
+    
+    cliente_nombre = cw.customer.company.legal_name if cw.customer.company else "Cliente B2C"
+    log_audit_event(
+        request=request,
+        action='CONTRACT_SIGNED',
+        actor=request.user,
+        brand=tenant.brand,
+        details={
+            "cw_id": cw.id,
+            "customer_name": cliente_nombre,
+            "next_step": "billing_created",
+            "new_cw_id": new_cw.id
+        }
     )
 
     return {
