@@ -31,6 +31,6 @@ class DocumentOut(ModelSchema):
 class DocumentUploadPayload(Schema):
     """Payload para enviar junto al archivo multipart/form-data"""
     customer_id: int
-    document_type_id: int
+    document_type_code: str
     workflow_id: Optional[int] = None
     state_id: Optional[int] = None

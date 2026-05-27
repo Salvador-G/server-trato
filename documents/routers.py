@@ -46,9 +46,9 @@ def upload_document(
 
     # 2. Validación de Tipo de Documento con mensaje claro
     try:
-        doc_type = DocumentType.objects.get(id=payload.document_type_id, brand=tenant.brand)
+        doc_type = DocumentType.objects.get(code=payload.document_type_code, brand=tenant.brand)
     except DocumentType.DoesNotExist:
-        raise HttpError(404, f"El Tipo de Documento con ID {payload.document_type_id} no está configurado.")
+        raise HttpError(404, f"El Tipo de Documento con código {payload.document_type_code} no está configurado.")
     
     try:
         with transaction.atomic():
