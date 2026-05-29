@@ -1,4 +1,5 @@
 from ninja import Router, Query
+from ninja_jwt.authentication import JWTAuth
 from typing import List
 from django.utils import timezone
 from django.db.models import Count, Q
@@ -12,7 +13,7 @@ from workflows.models import CustomerWorkflow
 from analytics_api.schemas import TradeFunnelOut, MonthlyRecordPercentageOut
 from core.dependencies import get_authorized_brands
 
-router = Router()
+router = Router(auth=JWTAuth())
 
 # ==========================================
 # 1. ESTADO DEL EMBUDO COMERCIAL (Gráfico de Barras)
