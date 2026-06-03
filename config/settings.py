@@ -186,7 +186,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-#Hola soy famoso :D psdt: esto es un comentario para probar el volumen en dokploy, no tiene ningún otro propósito :P
+# Comentario para probar commits en dokploy :p
 
 # =========================
 # JAZZMIN SETTINGS
