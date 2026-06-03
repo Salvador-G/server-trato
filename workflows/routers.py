@@ -80,14 +80,29 @@ def list_active_workflows(request, workflow_code: str = None, x_brand_id: int = 
 
 @router.post("/start", response={201: CustomerWorkflowOut})
 def start_workflow(request, payload: CustomerWorkflowCreate, x_brand_id: int = Header(..., alias="X-Brand-Id")):
-    """Inicia un nuevo proceso para un cliente (Entra al Estado 1)"""
+    """Inicia un nuevo proceso para un cliente que YA EXISTE (Ej: Cross-sell / Upsell interno)"""
     tenant = get_current_tenant(request, x_brand_id)
     
     customer = get_object_or_404(Customer, id=payload.customer_id, brand=tenant.brand)
     workflow = get_object_or_404(Workflow, code=payload.workflow_code, brand=tenant.brand)
     
-    if CustomerWorkflow.objects.filter(customer=customer, workflow=workflow, finished_at__isnull=True).exists():
-        raise HttpError(400, f"El cliente ya tiene un proceso de '{workflow.name}' activo.")
+    # 1. Buscamos qué servicio específico le estamos intentando vender ahora
+    # Asume que el front envía un identificador dentro de la metadata
+    servicio_id = payload.metadata.get("servicio_id") if payload.metadata else None
+
+    # 2. Bloqueamos SOLO si ya le estamos vendiendo activamente ese mismo servicio
+    if servicio_id:
+        if CustomerWorkflow.objects.filter(
+            customer=customer, 
+            workflow=workflow, 
+            finished_at__isnull=True,
+            metadata__servicio_id=servicio_id
+        ).exists():
+            raise HttpError(400, f"El cliente ya tiene un proceso de '{workflow.name}' activo para este servicio.")
+    else:
+        # Validación legacy por si no usan servicio_id (Opcional, podrías quitarla)
+        if CustomerWorkflow.objects.filter(customer=customer, workflow=workflow, finished_at__isnull=True).exists():
+            raise HttpError(400, f"El cliente ya tiene un proceso de '{workflow.name}' activo.")
 
     initial_state = workflow.states.order_by('sort_order').first()
     if not initial_state:
@@ -99,15 +114,17 @@ def start_workflow(request, payload: CustomerWorkflowCreate, x_brand_id: int = H
             workflow=workflow,
             current_state=initial_state,
             assigned_to_id=payload.assigned_to_id,
-            metadata=payload.metadata or {} # <-- NUEVO: Guardamos la data inicial
+            metadata=payload.metadata or {}
         )
         
         CustomerWorkflowHistory.objects.create(
             customer_workflow=cw,
             state=initial_state,
             user=request.user,
-            comment=payload.initial_comment
+            comment=payload.initial_comment or "Proceso adicional iniciado internamente."
         )
+        
+        # Opcional: Agregar aquí tu log_audit_event para mantener la consistencia con /manual
         
     return 201, cw
 

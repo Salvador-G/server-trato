@@ -209,14 +209,25 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
             initial_state = WorkflowState.objects.filter(workflow=workflow).order_by('sort_order').first()
             
             if initial_state:
-                # Insertamos el lead en la primera etapa del tablero
-                CustomerWorkflow.objects.get_or_create(
+                # 1. Inyectamos el form_key en la data para saber de qué formulario vino
+                data["form_source_key"] = form.form_key 
+                
+                # 2. Verificamos si este cliente ya tiene una solicitud ACTIVA para ESTE formulario exacto
+                # (Así permitimos que use su correo para otros formularios o servicios)
+                solicitud_activa = CustomerWorkflow.objects.filter(
                     customer=customer,
                     workflow=workflow,
-                    defaults={
-                        "current_state": initial_state,
-                        "metadata": data  # Toda la info extra va al tablero
-                    }
-                )
+                    finished_at__isnull=True,
+                    metadata__form_source_key=form.form_key
+                ).exists()
+
+                if not solicitud_activa:
+                    # 3. Usamos .create() en lugar de get_or_create()
+                    CustomerWorkflow.objects.create(
+                        customer=customer,
+                        workflow=workflow,
+                        current_state=initial_state,
+                        metadata=data
+                    )
 
     return 201, {"submission_id": str(submission.submission_id)}
