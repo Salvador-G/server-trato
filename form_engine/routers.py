@@ -123,34 +123,67 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
     
     if not form:
         raise HttpError(404, "Formulario no encontrado.")
-        
+
+    # ==========================================
+    # 1. FILTRO ANTI-VACÍO (Anti-Spam Básico)
+    # ==========================================
+    # Limpiamos el payload de nulos o strings vacíos
+    datos_limpios = {
+        k: v for k, v in payload.payload.items() 
+        if v is not None and str(v).strip() != ""
+    }
+
+    if not datos_limpios:
+        raise HttpError(400, "El formulario no puede enviarse completamente vacío.")
+
+    # ==========================================
+    # 2. VALIDACIÓN DINÁMICA DE REGLAS
+    # ==========================================
+    # Asumiendo que tu modelo Form tiene un campo JSON (ej. `fields_config`) 
+    # donde guardas la estructura de los campos que el tenant configuró.
+    errores_validacion = {}
+    
+    if hasattr(form, 'fields_config') and form.fields_config:
+        for campo in form.fields_config:
+            # Ignoramos campos que son meramente para visualización estática en el front
+            if campo.get('is_static_display'):
+                continue
+                
+            nombre_campo = campo.get('name')
+            es_requerido = campo.get('required', False)
+            valor_recibido = datos_limpios.get(nombre_campo)
+
+            if es_requerido and not valor_recibido:
+                errores_validacion[nombre_campo] = "Este campo es obligatorio."
+                
+    if errores_validacion:
+        # Detenemos el flujo y le avisamos al front exactamente qué falló
+        raise HttpError(400, {"mensaje": "Errores de validación", "detalles": errores_validacion})
+
+    # ==========================================
+    # 3. GUARDADO Y PUENTE COMERCIAL
+    # ==========================================
     with transaction.atomic():
-        # 1. Guardamos la respuesta en la bandeja de formularios
+        # Guardamos la respuesta usando la data YA LIMPIA
         submission = FormSubmission.objects.create(
             form=form,
-            payload=payload.payload,
+            payload=datos_limpios, # Reemplazamos el raw por los datos limpios
             source=payload.source
         )
         
-        # ==========================================
-        # 2. EL PUENTE: CONVERSIÓN A LEAD COMERCIAL
-        # ==========================================
-        data = payload.payload
+        # Extraemos los datos dinámicos usando los datos limpios
+        email = datos_limpios.get("email") or datos_limpios.get("Correo Principal") or f"prospecto_{submission.id}@sin-correo.com"
+        nombre = datos_limpios.get("Nombre Completo") or "Prospecto Web"
+        telefono = datos_limpios.get("telefono") or datos_limpios.get("Teléfono Móvil") or ""
         
-        # Extraemos los datos dinámicos
-        email = data.get("email") or data.get("Correo Principal") or f"prospecto_{submission.id}@sin-correo.com"
-        nombre = data.get("Nombre Completo") or "Prospecto Web"
-        telefono = data.get("telefono") or data.get("Teléfono Móvil") or ""
-        
-        ruc = data.get("ruc") or data.get("RUC / ID Fiscal") or ""
-        razon_social = data.get("razonSocial") or data.get("Razón Social") or ""
+        ruc = datos_limpios.get("ruc") or datos_limpios.get("RUC / ID Fiscal") or ""
+        razon_social = datos_limpios.get("razonSocial") or datos_limpios.get("Razón Social") or ""
 
         customer = None
 
         # --- LÓGICA B2B vs B2C ---
         if ruc or razon_social:
             # FLUJO B2B (Empresa)
-            # 1. Creamos la Empresa
             company, _ = Company.objects.get_or_create(
                 brand_id=brand_id,
                 tax_id=ruc or f"PENDIENTE-{submission.id}",
@@ -159,7 +192,6 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
                     "metadata": {"origen": "Widget Web"}
                 }
             )
-            # 2. Creamos al Contacto y lo asociamos a la Empresa
             contact, _ = Contact.objects.get_or_create(
                 brand_id=brand_id,
                 email=email,
@@ -170,7 +202,6 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
                     "is_primary_contact": True
                 }
             )
-            # 3. Creamos el Nexo (Customer B2B)
             customer, _ = Customer.objects.get_or_create(
                 brand_id=brand_id,
                 company=company,
@@ -181,7 +212,6 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
             )
         else:
             # FLUJO B2C (Individuo)
-            # 1. Creamos solo al Contacto humano
             contact, _ = Contact.objects.get_or_create(
                 brand_id=brand_id,
                 email=email,
@@ -190,7 +220,6 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
                     "phone": telefono
                 }
             )
-            # 2. Creamos el Nexo (Customer B2C)
             customer, _ = Customer.objects.get_or_create(
                 brand_id=brand_id,
                 contact=contact,
@@ -209,11 +238,9 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
             initial_state = WorkflowState.objects.filter(workflow=workflow).order_by('sort_order').first()
             
             if initial_state:
-                # 1. Inyectamos el form_key en la data para saber de qué formulario vino
-                data["form_source_key"] = form.form_key 
+                # Inyectamos el form_key en la data para saber de qué formulario vino
+                datos_limpios["form_source_key"] = form.form_key 
                 
-                # 2. Verificamos si este cliente ya tiene una solicitud ACTIVA para ESTE formulario exacto
-                # (Así permitimos que use su correo para otros formularios o servicios)
                 solicitud_activa = CustomerWorkflow.objects.filter(
                     customer=customer,
                     workflow=workflow,
@@ -222,12 +249,11 @@ def submit_public_form(request, brand_id: int, form_key: str, payload: FormSubmi
                 ).exists()
 
                 if not solicitud_activa:
-                    # 3. Usamos .create() en lugar de get_or_create()
                     CustomerWorkflow.objects.create(
                         customer=customer,
                         workflow=workflow,
                         current_state=initial_state,
-                        metadata=data
+                        metadata=datos_limpios
                     )
 
     return 201, {"submission_id": str(submission.submission_id)}
