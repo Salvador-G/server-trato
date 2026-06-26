@@ -6,10 +6,10 @@ from ninja.errors import HttpError
 from typing import List
 from ninja_jwt.authentication import JWTAuth
 from django.shortcuts import get_object_or_404
-
+from django.contrib.auth import get_user_model
 from core.models import BrandUser, AuditLog
 from core.dependencies import get_current_tenant, verify_module_access
-from ..schemas import AdminUserListOut, UserDetailExtendedOut, AuditLogOut
+from ..schemas import AdminUserListOut, UserDetailExtendedOut, AuditLogOut, PasswordResetIn
 
 router = Router(tags=["Administrator"], auth=JWTAuth())
 
@@ -131,3 +131,86 @@ def get_employee_sessions(request, user_id: int, x_brand_id: int = Header(..., a
         actor_id=user_id,
         action__in=['AUTH_LOGIN', 'AUTH_FAILED']
     ).order_by('-created_at')
+    
+# ---------------------------------------------------------
+# 4. ALTERAR ESTADO DE LA CUENTA (Suspender / Reactivar)
+# ---------------------------------------------------------
+@router.patch("/brand/employees/{user_id}/toggle-status", response={200: dict})
+def toggle_employee_status(request, user_id: int, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    current_tenant = get_current_tenant(request, x_brand_id)
+    
+    # 1. Verificación de Roles (Solo Owners y Managers)
+    if current_tenant.role.name.lower() not in ['owner', 'manager']:
+        raise HttpError(403, "No tienes permisos para alterar el estado de los usuarios.")
+        
+    # 2. Evitar auto-modificación
+    if current_tenant.user.id == user_id:
+        raise HttpError(400, "No puedes modificar tu propio estado por medidas de seguridad.")
+
+    target_brand_user = get_object_or_404(BrandUser, user_id=user_id, brand=current_tenant.brand)
+    
+    # Determinamos cuál será el nuevo estado (lo contrario al actual)
+    new_status = not target_brand_user.is_active
+
+    # 3. Regla: Protección del último Owner (SOLO si se está intentando suspender)
+    if not new_status and target_brand_user.role.name.lower() == 'owner':
+        total_owners = BrandUser.objects.filter(brand=current_tenant.brand, role__name__iexact='owner', is_active=True).count()
+        if total_owners <= 1:
+            raise HttpError(400, "No se puede suspender al único Owner activo.")
+
+    # 4. Ejecutar el Toggle Dual
+    target_brand_user.is_active = new_status
+    target_brand_user.save(update_fields=['is_active'])
+
+    target_user = target_brand_user.user
+    target_user.is_active = new_status
+    target_user.save(update_fields=['is_active'])
+
+    # 5. Registrar en Auditoría
+    accion_log = "USER_REACTIVATED" if new_status else "USER_SUSPENDED"
+    AuditLog.objects.create(
+        brand=current_tenant.brand,
+        actor=current_tenant.user,
+        action=accion_log,
+        details={"target_user_id": user_id, "target_email": target_user.email}
+    )
+
+    mensaje = "Usuario reactivado exitosamente." if new_status else "Usuario suspendido correctamente."
+    return 200, {"message": mensaje, "is_active": new_status}
+
+# ---------------------------------------------------------
+# 5. RESTABLECER CONTRASEÑA (Tenant Admin)
+# ---------------------------------------------------------
+@router.post("/brand/employees/{user_id}/reset-password", response={200: dict})
+def reset_employee_password(request, user_id: int, payload: PasswordResetIn, x_brand_id: int = Header(..., alias="X-Brand-Id")):
+    current_tenant = get_current_tenant(request, x_brand_id)
+    
+    # 1. Verificación de roles
+    if current_tenant.role.name.lower() not in ['Owner', 'Manager']:
+        raise HttpError(403, "No tienes permisos para cambiar contraseñas.")
+
+    # 2. Obtener el usuario objetivo
+    target_brand_user = get_object_or_404(BrandUser, user_id=user_id, brand=current_tenant.brand)
+    target_user = target_brand_user.user
+
+    # 3. Cambiar la contraseña (usamos set_password que encripta automáticamente)
+    target_user.set_password(payload.new_password)
+    target_user.save(update_fields=['password'])
+
+    # Nota sobre JWT: Cambiar la contraseña en la BD no mata los Access Tokens 
+    # que ya están vivos (porque JWT es stateless). Si quieres forzar el logout total 
+    # de los dispositivos, necesitarías implementar una Blacklist de tokens en SimpleJWT 
+    # y agregar el token actual aquí. Por ahora, el cambio evitará que emitan nuevos tokens.
+
+    # 4. Registrar en Auditoría Operativa
+    AuditLog.objects.create(
+        brand=current_tenant.brand,
+        actor=current_tenant.user,
+        action="PASSWORD_RESET",
+        details={
+            "target_user_id": user_id, 
+            "devices_logged_out_requested": payload.logout_devices
+        }
+    )
+
+    return 200, {"message": "Contraseña actualizada exitosamente."}
