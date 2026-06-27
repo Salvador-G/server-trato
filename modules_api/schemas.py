@@ -188,3 +188,7 @@ class AdminUserListOut(Schema):
     joined_at: datetime
     last_login: Optional[datetime] = None
     session_info: UserSessionInfoOut
+    
+class PasswordResetIn(Schema):
+    new_password: str
+    logout_devices: bool = True
